@@ -1,0 +1,450 @@
+====================================================================================================
+PUJA VAAHINI (AYAGARYLLU, TEMPLE CMS & VENDOR ECOSYSTEM) - MASTER USE CASES SPECIFICATION
+====================================================================================================
+Document Version: 3.5.0
+Date: 2026-11-03
+Status: 100% Comprehensive Baseline (All Use Cases, Modules A through J Preserved)
+
+----------------------------------------------------------------------------------------------------
+1. CORE PARTICIPATING ACTORS
+----------------------------------------------------------------------------------------------------
+1.1 Devotee (Ghar Ka Yajamana / Pilgrim / VIP):
+    - Multi-language selection: English, Telugu (తెలుగు), or Hindi (हिन्दी).
+    - Profile with Profile Picture upload, Gotram, Nakshatram, Rashi, City.
+    - Books home poojas, temple-specific VIP pujas, and live temple E-Pooja video calls (WebRTC).
+    - Selects priest slots, views required material checklist before ordering.
+    - If material kit is unchecked, purchases directly from local vendors via integrated "Puja Store".
+    - Two-way in-app real-time chat with the assigned priest.
+    - Swiggy-style cancellation flow with refund transparency and retention rescue hooks.
+    - Protected back navigation and clear logout modal.
+
+1.2 Vedic Priest (Purohit / Ayagaryllu):
+    - Language selection (English, Telugu, Hindi) with native Vedic terminology.
+    - Profile with Profile Picture, Vedic Shakha, Sampradaya, and Experience.
+    - Configures available calendar slots (date/time windows).
+    - Adds custom pooja services with personalized Dakshina pricing.
+    - Edits/tailors the required Samagri material checklist per booking.
+    - Peer Referral: Instantly auto-reassigns/delegates a booking to a known colleague priest with immediate devotee notification.
+    - Two-way in-app real-time chat with devotee.
+    - Conducts live in-person or temple WebRTC live video calls.
+    - Duty toggle and protected logout flow to prevent accidental duty disconnection.
+
+1.3 Local Pooja Store Vendor:
+    - Operates via a dedicated "Vendor App" (Compose Multiplatform Android).
+    - Multi-language support for regional inventory management.
+    - Profile with Profile Picture, Store Name, Geolocation, and Contact info.
+    - Manages inventory (fresh pooja flowers, brass diyas, pure cow ghee, havan samagri).
+    - Receives, packs, and delivers orders when devotees arrange materials independently.
+
+1.4 Temple Administrator & Counter Clerk:
+    - Operates via a dedicated "Temple CMS" (Next.js / React Web Portal).
+    - Manages temple profiles (e.g., Dhapurmari Temple, Kotipalli, Vemulawada), deities, timings.
+    - Configures Temple-specific VIP Pujas, VIP Ticket slots, and Live E-Pooja Video streaming slots.
+    - Assigns Temple Archakas/Priests and manages revenue collection/reconciliation without lag.
+    - Operates ultra-fast counter check-in scanner (< 50ms, offline-resilient).
+
+----------------------------------------------------------------------------------------------------
+2. DETAILED USE CASES BY MODULE
+----------------------------------------------------------------------------------------------------
+
+====================================================================================================
+MODULE A: PRIEST CALENDAR SLOTS, CUSTOM SERVICES & DAKSHINA PRICING
+====================================================================================================
+
+UC-A01: Priest Calendar Slot Availability Management
+    - Actor: Priest
+    - Flow:
+      1. Priest opens "Schedule Workbench".
+      2. Selects date and marks hourly availability slots (e.g., Morning: 06:00-09:00, 09:30-12:30; Evening: 17:00-20:00).
+      3. Sets recurring rules or blocks specific dates for personal rituals.
+      4. Slots are stored in PostgreSQL (`priest_availability_slots`) and cached in Redis.
+
+UC-A02: Priest Adds Custom Rituals & Personalized Pricing
+    - Actor: Priest
+    - Flow:
+      1. Priest opens "My Services" in Priest App.
+      2. Creates a custom pooja (e.g., "Navagraha Homa + Dhanvantari Homa Special").
+      3. Sets base Dakshina fee, estimated duration, and samagri requirements.
+      4. Devotees searching for nearby priests can see and book these custom offerings directly.
+
+UC-A03: Devotee Slot Booking & 10-Minute Hold Lock
+    - Actor: Devotee
+    - Flow:
+      1. Devotee selects a priest and pooja package.
+      2. Devotee views available green slots for that priest.
+      3. Devotee selects matching slot -> slot temporarily locks for 10 minutes in Redis via Redlock pending checkout confirmation.
+
+====================================================================================================
+MODULE B: EDITABLE SAMAGRI (MATERIAL) CHECKLIST & PUJA STORE WITH VENDOR APP
+====================================================================================================
+
+UC-B01: Devotee Pre-Order Material Checklist Inspection
+    - Actor: Devotee
+    - Flow:
+      1. Devotee views pooja package details.
+      2. Devotee taps "View Required Samagri List".
+      3. Complete categorized list is displayed:
+         - Fresh items (Betel leaves, Mango leaves, Coconuts, Flowers, Fruits)
+         - Dry essentials (Turmeric, Kumkum, Akshata, Camphor, Dhoop, Pure Ghee, Dry fruits)
+         - Havan items (Havan samagri, Navadhanya, Sacred firewood)
+      4. Checkbox option:
+         [X] "Priest brings complete Samagri Kit" (Default: checked, e.g. +Rs. 1,200)
+         [ ] "I will arrange my own materials"
+
+UC-B02: Priest Customizes & Edits Samagri List per Booking
+    - Actor: Priest
+    - Flow:
+      1. Priest views custom pooja service or incoming booking.
+      2. Priest edits the items/quantities based on specific family tradition or gotram.
+      3. Priest saves updated checklist, which dynamically syncs to Devotee app.
+
+UC-B03: Devotee Unchecks Samagri -> Redirected to Puja Store
+    - Actor: Devotee, Local Vendor
+    - Flow:
+      1. Devotee unchecks "Priest brings complete Samagri Kit".
+      2. App presents option: "Would you like local vendors to deliver fresh Samagri to your doorstep? [Visit Puja Store]".
+      3. Devotee enters "Puja Store" with pre-filled shopping list containing the missing items.
+      4. Devotee sees nearby verified vendors ranked by proximity and rating.
+
+UC-B04: Puja Store Order Placement & Doorstep Delivery
+    - Actor: Devotee, Local Vendor
+    - Flow:
+      1. Devotee reviews cart with pre-populated samagri kit from local vendor.
+      2. Devotee confirms delivery address and selects delivery slot.
+      3. Payment processed; order routed to the nearest vendor via Vendor App.
+
+UC-B05: Dedicated Vendor App Operations (Compose Multiplatform Android)
+    - Actor: Local Vendor
+    - Flow:
+      1. Local vendor signs up, adds shop name, address, profile pic, and phone number.
+      2. Vendor updates catalog prices and stock availability.
+      3. Vendor receives sound alert for new samagri orders.
+      4. Vendor accepts order, marks "Packed" and "Dispatched/Delivered".
+
+====================================================================================================
+MODULE C: REAL-TIME IN-APP CHAT (DEVOTEE <-> PRIEST)
+====================================================================================================
+
+UC-C01: Direct Devotee-Priest Chat Channel
+    - Actors: Devotee, Priest
+    - Flow:
+      1. Upon booking initiation, a dedicated WebSocket chat room is created.
+      2. Devotee and Priest exchange messages, Gotram/horoscope images, address details.
+      3. Messages are persisted in database with read receipts and timestamps.
+
+UC-C02: Read Receipts, Typing Indicators & System Status Alerts
+    - Actors: Devotee, Priest, System
+    - Flow:
+      1. As priest types, devotee sees "Pandit Sharma is typing...".
+      2. Read receipts (double green checks) confirm message delivery.
+      3. System events injected into thread (e.g. "Priest is In-Transit", "Priest Arrived").
+
+====================================================================================================
+MODULE D: PRIEST REFERRAL / DELEGATION (INSTANT AUTO-REASSIGNMENT)
+====================================================================================================
+
+UC-D01: Priest Peer Delegation with Instant Reassignment
+    - Actors: Assigned Priest, Referred Priest, Devotee
+    - Flow:
+      1. Assigned Priest has a sudden conflict or out-of-town commitment.
+      2. Priest opens active booking and taps "Refer to Colleague".
+      3. Priest selects a trusted, verified purohit from their contact network.
+      4. System performs Instant Auto-Reassignment:
+         - Booking is immediately reassigned to the referred priest (`bookings.priest_id = referred_priest_id`).
+         - Escrow funds and booking schedule remain intact.
+
+UC-D02: Devotee Instant Notification & Transparent Profile Card
+    - Actor: Devotee
+    - Flow:
+      1. Push notification & in-app banner sent to Devotee:
+         "Your booking for [Pooja] has been referred to [Referred Priest Name] (Rigveda, 15 yrs exp, 4.9⭐)".
+      2. Devotee views referred priest's profile picture, Vedic qualifications, and phone number.
+      3. Chat thread automatically transfers to the new priest.
+
+====================================================================================================
+MODULE E: TEMPLE CMS, VIP TICKETING, ZERO-LAG COUNTER SCANS & LIVE E-POOJA VIDEO CALLS
+====================================================================================================
+
+UC-E01: Temple CMS Admin Portal (Next.js / React)
+    - Actor: Temple Board / Administrator
+    - Flow:
+      1. Admin logs into the Temple CMS Web Portal (`/temple-cms`).
+      2. Configures Temple information (e.g., Dhapurmari Temple, presiding deity, temple timings, history, photos).
+      3. Sets up VIP Pujas (e.g., "Special Rudrabhishekam VIP Sankalpam").
+      4. Configures VIP ticket quotas, pricing, and live WebRTC e-pooja broadcast slots.
+      5. Manages temple archakas and accesses real-time financial reconciliation reports.
+
+UC-E02: Devotee Books Temple-Specific VIP Puja / Live E-Pooja
+    - Actor: Devotee, Temple Archaka
+    - Flow:
+      1. Devotee selects "Temples" in app -> browses temples (e.g., Dhapurmari Temple).
+      2. Devotee chooses either:
+         a) "VIP In-Person Puja": Devotee books VIP slot, receives digital pass with zero-lag QR token.
+         b) "Live E-Pooja Video Call": Devotee joins live two-way WebRTC stream from temple sanctum where the priest performs Sankalpam taking devotee's Gotra and Nakshatra.
+      3. Devotee completes payment.
+
+UC-E03: Zero-Lag On-Premise Counter Ticket Issuance & Fast QR Check-In
+    - Actor: Pilgrim, Temple Counter Clerk
+    - Context: Stone temple complexes with low/no cellular reception.
+    - Flow:
+      1. Counter clerk issues ticket or devotee presents mobile QR code.
+      2. Scanner validates ticket using offline cryptographic signature (Ed25519) in < 50ms without cloud lookup.
+      3. Scanner records entry in local SQLite cache to prevent duplicate scans.
+      4. Background batch synchronization updates cloud when Wi-Fi/4G connects.
+
+UC-E04: Cash at Counter & Online Escrow Financial Reconciliation
+    - Actor: Temple Administrator
+    - Flow:
+      1. End of day report aggregates online VIP tickets and cash collected at sanctum counters.
+      2. Automated ledger prevents cash discrepancies and reconciles temple archaka honorariums.
+
+====================================================================================================
+MODULE F: PROFILE PICTURE & IDENTITY
+====================================================================================================
+
+UC-F01: Devotee Profile Picture Upload & Crop
+    - Actor: Devotee
+    - Flow:
+      1. Devotee taps avatar in Profile tab -> selects photo from camera or gallery.
+      2. Image is compressed on-device to WebP format.
+      3. Uploaded to backend asset storage; URL saved in `users.profile_picture_url`.
+
+UC-F02: Priest Profile Picture & Vedic Credentials Verification
+    - Actor: Priest
+    - Flow:
+      1. Priest uploads professional portrait in traditional Vedic attire.
+      2. Displays on nearby radar discovery list and active dispatch cards.
+
+UC-F03: Vendor Storefront Banner & Profile Photo
+    - Actor: Vendor
+    - Flow:
+      1. Vendor uploads shop board photo and profile picture.
+      2. Displays to devotees browsing the Puja Store.
+
+====================================================================================================
+MODULE G: SWIGGY / RAPIDO STYLE CANCELLATION MODAL & REFUND POLICY
+====================================================================================================
+
+UC-G01: Devotee Cancellation Flow with Retention & Refund Breakdown
+    - Actor: Devotee, Backend Escrow Engine
+    - Trigger: Devotee taps "Cancel Booking" on Live Tracking or Booking Details screen.
+    - Flow:
+      1. System opens interactive Cancellation Bottom Sheet / Modal:
+         a) Warning Header: "Are you sure you want to cancel?"
+         b) Status Indicator:
+            - If in `REQUESTED` stage: "100% Instant Refund - Free Cancellation"
+            - If in `ACCEPTED` stage (within 5 mins): "100% Instant Refund - Priest hasn't departed yet"
+            - If in `IN_TRANSIT` stage: "Priest is on the way (ETA: X mins). Nominal travel allowance (Rs. 150) applies, remainder refunded instantly."
+         c) Retention Hook: "Need to change timing? You can reschedule or reassign to another purohit for free!"
+            - Button: [Reschedule / Reassign Instead]
+         d) Reason Selector (Mandatory single-select with write-in):
+            - [ ] Priest taking too long / unresponsive
+            - [ ] Change of family plans / postponed muhurtham
+            - [ ] Arranged alternate purohit locally
+            - [ ] Selected wrong pooja / incorrect date
+            - [ ] Other (User text input)
+         e) Refund Summary Box:
+            - Advance Dakshina Paid: Rs. X,XXX
+            - Cancellation Fee: Rs. 0 (or Rs. 150 if priest arrived)
+            - Total Refund to Original Source: Rs. X,XXX
+      2. Devotee confirms via "Swipe to Cancel" or [Confirm Cancellation] button.
+      3. Backend updates booking status = `CANCELLED`, cancelled_by = `devotee`, escrow_status = `REFUNDED_TO_DEVOTEE`.
+      4. Priest receives instant push alert: "Booking cancelled by devotee. Travel allowance credited to wallet."
+
+UC-G02: Priest Cancellation & Automatic Devotee Rescue
+    - Actor: Priest, Backend Dispatch Engine, Devotee
+    - Trigger: Priest taps "Unable to Attend / Cancel Duty".
+    - Flow:
+      1. Priest selects reason (exigency, vehicle breakdown, emergency).
+      2. System prompts Priest: "Would you like to refer this booking to a known colleague?"
+         - Option A: Priest selects colleague -> triggers UC-D01 (Instant Reassignment).
+         - Option B: Priest taps "No, Re-Dispatch" -> Backend returns booking to `REQUESTED` state and notifies next highest-ranked priest within the search radius.
+      3. Devotee screen displays gentle banner: "Your priest encountered an emergency. We are connecting you to an equally qualified nearby Purohit immediately."
+
+UC-G03: 45-Second Dispatch Timeout & Auto-Escalation
+    - Actor: Dispatch Engine
+    - Flow:
+      1. Dispatch request sent to highest-scoring priest on radar with 45-second countdown timer.
+      2. If timer expires without priest response, system auto-escalates to candidate #2 on radar.
+      3. Devotee app maintains pulsing radar animation without dropping connection.
+
+====================================================================================================
+MODULE H: IN-APP NAVIGATION & SCREEN FLOW ARCHITECTURE
+====================================================================================================
+
+UC-H01: Devotee App Navigation Graph (5-Tab Bottom Navigation)
+    - Root Scaffold:
+      ├── TAB 1: 🪔 Services / Catalog
+      │   ├── Category Pills (Major Occasions, Sanskaras, Planetary Remedies, Vratams)
+      │   ├── Search Bar (Dynamic live search)
+      │   └── Sub-screens:
+      │       ├── Pooja Details Screen (Description, Vedic significance, Duration)
+      │       ├── Samagri Checklist Modal (Pre-order inspection & kit toggle)
+      │       ├── Priest Slot Picker Screen (Calendar date & time window)
+      │       └── Escrow Checkout Bottom Sheet (Advance payment, Dakshina break-up)
+      │
+      ├── TAB 2: 🏛️ Sacred Temples
+      │   ├── Temple Directory (e.g., Dhapurmari Temple, Kotipalli)
+      │   └── Sub-screens:
+      │       ├── Temple Overview (Deities, Timings, History)
+      │       ├── VIP In-Person Puja Booking (Slot selection, Zero-lag QR pass)
+      │       └── Live E-Pooja Video Call Booking (WebRTC 2-way room)
+      │
+      ├── TAB 3: 🛒 Puja Store
+      │   ├── Nearby Verified Vendors List (GPS proximity & ratings)
+      │   ├── Category Catalog (Fresh Flowers, Pure Ghee, Brassware, Havan Packs)
+      │   └── Sub-screens:
+      │       ├── Vendor Storefront & Inventory
+      │       └── Store Checkout & Delivery Address
+      │
+      ├── TAB 4: 📍 My Bookings & Live Radar
+      │   ├── Active Bookings List & History
+      │   └── Sub-screens:
+      │       ├── Rapido-Style Live Tracking Screen (Map, ETA, Priest details)
+      │       ├── In-App Chat Modal (Real-time WebSocket thread)
+      │       ├── Swiggy-Style Cancellation Bottom Sheet (Reasons & Refund)
+      │       └── Pooja Completion & Dakshina Release Modal (4-digit OTP)
+      │
+      └── TAB 5: 👤 Profile
+          ├── Profile Picture (Avatar upload & crop)
+          ├── Family Gotram, Nakshatram, Rashi editor
+          ├── 🌐 Language Switcher (English, Telugu, Hindi)
+          ├── 🚪 Logout Confirmation Modal
+          └── Consent history & App settings
+
+UC-H02: Priest App Navigation Graph (5-Tab Bottom Navigation)
+    - Root Scaffold:
+      ├── TAB 1: ⚡ Radar & Duty Dashboard
+      │   ├── Online / Offline Duty Switch (GPS ping toggle)
+      │   ├── Active Dispatches & Upcoming Poojas
+      │   └── Overlay: 45s Rapido-Style Incoming Dispatch Modal (Accept/Reject)
+      │
+      ├── TAB 2: 📅 Schedule Workbench
+      │   ├── Calendar Date Picker
+      │   └── Slot Manager (Add/Remove hourly availability windows, block dates)
+      │
+      ├── TAB 3: 📋 My Services & Pricing
+      │   ├── Custom Services List
+      │   └── Add/Edit Custom Service (Title, Dakshina Fee, Samagri Checklist)
+      │
+      ├── TAB 4: 💬 In-App Messages & Active Rituals
+      │   ├── Chat Threads with Devotees
+      │   └── Sub-screens:
+      │       ├── Active Pooja Controls (In-Transit, Arrived, Pooja Started)
+      │       ├── Colleague Referral Sheet (Instant delegation)
+      │       └── OTP Completion Input (Dakshina release verification)
+      │
+      └── TAB 5: 👤 Profile & Vedic Credentials
+          ├── Profile Picture (Upload & preview)
+          ├── Veda Shakha, Sampradaya, Experience years
+          ├── 🌐 Language Switcher (English, Telugu, Hindi)
+          ├── 🚪 Logout Confirmation Modal
+          └── Earnings Wallet & Bank payout settings
+
+UC-H03: Dedicated Vendor App Navigation Graph (3-Tab Bottom Navigation)
+    - Root Scaffold:
+      ├── TAB 1: 📦 Live Orders Feed (Incoming, Packed, Out for Delivery, Completed)
+      │   ├── Order Details Screen (Missing samagri list, devotee delivery address)
+      │   └── Dispatch Status Stepper (Mark Packed -> Mark Dispatched -> Delivered)
+      │
+      ├── TAB 2: 🏪 Inventory & Catalog
+      │   ├── Inventory Items List (Price, unit, stock quantity)
+      │   └── Add/Edit Product Modal (Photo, price, in-stock/out-of-stock switch)
+      │
+      └── TAB 3: ⚙️ Store Profile & Business Hours
+          ├── Store Name, Board Photo, and GPS Address
+          ├── Open / Closed Storefront Switch
+          └── 🌐 Language Switcher (English, Telugu, Hindi)
+
+UC-H04: Temple CMS Web Portal Navigation (Sidebar Layout)
+    - Root Layout:
+      ├── 📊 Dashboard: Daily VIP bookings, online ticket revenue, live seva status
+      ├── 🏛️ Temple Profile: Deities, timings, history, photo gallery
+      ├── 🎟️ VIP Pujas & Quotas: Package definitions, daily slot limits, pricing
+      ├── 📹 Live E-Pooja Studio: WebRTC broadcast management from sanctum
+      └── 🧾 Financial Reconciliation: Cash-at-counter & online escrow payout reports
+
+====================================================================================================
+MODULE I: UX RESILIENCE, BACK-NAVIGATION GUARDS, LOGOUT MODAL & NETWORK ERROR STATES
+====================================================================================================
+
+UC-I01: Hardware & System Back-Navigation Guards
+    - Context: Android system back gesture / back button press (`BackHandler`).
+    - Flow Rules:
+      1. Root Tabs: First back press triggers snackbar "Press back again to exit". Second press within 2s closes app.
+      2. Sub-Screens: Regular back press cleanly navigates up to parent tab.
+      3. Protected Critical States:
+         - Checkout / Slot Reserve: Intercepts with "Leaving will release reserved slot. Discard? [Stay / Discard]".
+         - Live WebRTC Sankalpam: Options for [Minimize to Background Audio (PiP)] or [End Video Call].
+         - In-Transit Tracking: Returns to Home tab with persistent top banner showing active ETA.
+
+UC-I02: Logout Confirmation Popup & Session Purge
+    - Trigger: User taps "Log Out" on Profile screen.
+    - Flow:
+      1. Displays styled confirmation dialog: "Log Out of Puja Vaahini? You will need to re-verify via OTP."
+      2. Active Order Guard: Displays warning if pooja is in-progress: "⚠️ Active pooja scheduled. Logging out will NOT cancel the ritual."
+      3. Confirm action clears JWT tokens, disconnects WebSockets/WebRTC sessions, purges backstack (`popUpTo(0)`), and routes to Login screen.
+
+UC-I03: Loading Skeletons & Animated Shimmers
+    - Shimmer skeletons for Catalog grid, Nearby Priests radar list, Temple directory, and Puja Store products.
+    - Contextual loaders for Radar scanning, Escrow locking, and Muhurtham verification.
+
+UC-I04: Network Disconnection & Offline Error States
+    - Native network monitor displays top amber bar: "⚠️ No Internet Connection. Showing offline cached details."
+    - Full-Screen `NetworkErrorScreen` with sacred disconnected illustration and `[🔄 Try Again]` exponential backoff retry.
+    - 500 Server Maintenance View: "Our servers are undergoing routine Vedic ephemeris synchronization. We will be back online shortly."
+
+UC-I05: Empty Search States & Radius Expansion
+    - Trigger: Devotee searches with specific Sampradaya or category where 0 priests match.
+    - View: Displays empty state illustration with spiritual copy: "No Purohits found matching your criteria within 5 km."
+    - Action: Primary button [Expand Search Radius to 15 km].
+
+====================================================================================================
+MODULE J: 3-LANGUAGE INTERNATIONALIZATION (i18n) & MODULAR LOCALIZATION ARCHITECTURE
+====================================================================================================
+
+UC-J01: Language Selection & Live App Re-Rendering
+    - Supported Languages:
+      1. English (`en`) - Default / Urban & Diaspora Devotees
+      2. Telugu (`te` - తెలుగు) - Primary regional language for Vedic Purohits & South shrines
+      3. Hindi (`hi` - हिन्दी) - Pan-Indian / North Indian Vedic rituals & devotees
+    - Trigger Points:
+      1. First App Launch: Language selection welcome screen with native language cards (English, తెలుగు, हिन्दी).
+      2. Profile Settings: 1-click Language Switcher radio bottom-sheet accessible at any time.
+    - Flow:
+      1. User selects language.
+      2. `LocalizationManager` updates active `AppLanguage` state.
+      3. Compose `CompositionLocalProvider(LocalAppStrings provides localizedStrings)` triggers zero-reboot instant UI re-render across all active screens.
+      4. Selection is saved to local encrypted preferences and synced to backend (`users.preferred_language`).
+      5. Backend sends future Push Notifications and SMS OTPs in the selected language.
+
+UC-J02: Modular Clean-Architecture i18n Folder Organization
+    - Structure located in shared common contracts for 100% code reuse across Devotee, Priest, and Vendor apps:
+      `apps/common-contracts/src/commonMain/kotlin/com/purohit/contracts/i18n/`
+    - Domain-partitioned string interfaces to prevent monolithic, unmaintainable string files:
+      ├── `AppLanguage.kt` (Enum with ISO code, native script name, and script direction)
+      ├── `LocalizationManager.kt` (State manager, preference loader, and Compose Local provider)
+      ├── `StringContract.kt` (Aggregator interface matching all sub-domain contracts)
+      ├── `models/` (Type-safe domain contracts):
+      │   ├── `AuthStrings.kt` (Login, OTP, KYC, Gotram, Consent agreements)
+      │   ├── `CatalogStrings.kt` (Pooja titles, Muhurtham labels, categories, durations)
+      │   ├── `SamagriStrings.kt` (Checklist, items, dry/fresh categories, Puja store)
+      │   ├── `DispatchStrings.kt` (Radar, ETA, ratings, transit status, OTP release)
+      │   ├── `TempleStrings.kt` (Sanctum, VIP passes, E-Pooja video call, deities)
+      │   ├── `CancellationStrings.kt` (Swiggy-style reasons, refund warnings, retention)
+      │   └── `ErrorStrings.kt` (Offline alerts, retry buttons, maintenance notices)
+      └── `locales/` (Pure language implementations):
+          ├── `en/` (English modular classes)
+          ├── `te/` (Telugu / తెలుగు modular classes)
+          └── `hi/` (Hindi / हिन्दी modular classes)
+
+UC-J03: CompositionLocal Reactive Zero-Reboot Live Re-Rendering
+    - Flow:
+      1. Entire UI tree is wrapped in `CompositionLocalProvider(LocalAppStrings provides currentStrings)`.
+      2. Any UI element referencing `LocalAppStrings.current.catalog.satyanarayana` updates instantaneously upon state change without Activity restart.
+
+UC-J04: Backend Language Header Sync (Accept-Language)
+    - Flow:
+      1. Every outgoing HTTP request appends `Accept-Language: te` (or `en`, `hi`).
+      2. Backend extracts header and localized error payloads, SMS OTP text, and WhatsApp notifications accordingly.
+====================================================================================================

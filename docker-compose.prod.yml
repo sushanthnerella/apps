@@ -1,0 +1,121 @@
+version: '3.8'
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. PostgreSQL 16 + PostGIS Spatial Engine
+  # ----------------------------------------------------------------------------
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: purohit_postgres
+    restart: always
+    environment:
+      POSTGRES_DB: purohit_db
+      POSTGRES_USER: purohit_admin
+      POSTGRES_PASSWORD: purohit_secure_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U purohit_admin -d purohit_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------------------------------------------
+  # 2. Redis Stack (Redlock Mutex, Geo Hashing, Pub/Sub)
+  # ----------------------------------------------------------------------------
+  redis:
+    image: redis/redis-stack-server:latest
+    container_name: purohit_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------------------------------------------
+  # 3. WebRTC Coturn TURN/STUN Server
+  # ----------------------------------------------------------------------------
+  coturn:
+    image: coturn/coturn:latest
+    container_name: purohit_coturn
+    restart: always
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+    environment:
+      - TURNSERVER_ENABLE=1
+    command:
+      - -n
+      - --log-file=stdout
+      - --realm=purohit.local
+      - --listening-port=3478
+      - --min-port=49152
+      - --max-port=65535
+      - --fingerprint
+      - --lt-cred-mech
+      - --user=purohit_user:purohit_turn_key
+
+  # ----------------------------------------------------------------------------
+  # 4. Go Unified Backend API Gateway
+  # ----------------------------------------------------------------------------
+  api-gateway:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: purohit_api_gateway
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8085:8085"
+    environment:
+      - PORT=8085
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=purohit_admin
+      - DB_PASSWORD=purohit_secure_password
+      - DB_NAME=purohit_db
+      - REDIS_ADDR=redis:6379
+      - JWT_SECRET=purohit_sacred_jwt_secret_key_2026
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8085/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ----------------------------------------------------------------------------
+  # 5. Temple CMS & VIP Gate Scanner Web App (Next.js 14)
+  # ----------------------------------------------------------------------------
+  temple-cms:
+    build:
+      context: ./temple-cms
+      dockerfile: Dockerfile
+    container_name: purohit_temple_cms
+    restart: always
+    depends_on:
+      - api-gateway
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=http://api-gateway:8085
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:3000/"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  pgdata:
+  redisdata:

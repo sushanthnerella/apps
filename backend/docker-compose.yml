@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: purohit_postgres
+    environment:
+      POSTGRES_DB: purohit_db
+      POSTGRES_USER: purohit_admin
+      POSTGRES_PASSWORD: purohit_secure_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+
+  redis:
+    image: redis/redis-stack-server:latest
+    container_name: purohit_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+
+  coturn:
+    image: coturn/coturn:latest
+    container_name: purohit_coturn
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+    environment:
+      - TURNSERVER_ENABLE=1
+    command:
+      - -n
+      - --log-file=stdout
+      - --realm=purohit.local
+      - --listening-port=3478
+      - --min-port=49152
+      - --max-port=65535
+      - --fingerprint
+      - --lt-cred-mech
+      - --user=purohit_user:purohit_turn_key
+
+volumes:
+  pgdata:
+  redisdata:

@@ -1,0 +1,41 @@
+*.iml
+.gradle
+/local.properties
+/.idea/
+.DS_Store
+/build
+build/
+**/build/
+/captures
+.externalNativeBuild
+.cxx
+*.apk
+*.aab
+
+# Node & Next.js
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+npm-debug.log*
+
+# Python
+__pycache__/
+**/__pycache__/
+*.pyc
+.venv/
+env/
+
+# Root XML dumps
+/*.xml
+
+# Go
+backend/bin/
+backend/vendor/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
