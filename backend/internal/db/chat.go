@@ -17,7 +17,7 @@ func (s *Storage) GetOrCreateChatRoom(bookingID, userID, priestID string) (strin
 
 	queryInsert := `
 		INSERT INTO chat_rooms (booking_id, user_id, priest_id) 
-		VALUES ($1, $2, $3) 
+		VALUES ($1, $2, NULLIF($3, '')::uuid) 
 		ON CONFLICT (booking_id) DO UPDATE SET is_active = TRUE 
 		RETURNING id
 	`
@@ -28,16 +28,68 @@ func (s *Storage) GetOrCreateChatRoom(bookingID, userID, priestID string) (strin
 	return roomID, nil
 }
 
+// GetChatRoomParticipants returns the booking ID, devotee owner user_id, and assigned priest_id for a chat room.
+// It joins with bookings to reflect any active reassignment/referral.
+func (s *Storage) GetChatRoomParticipants(roomID string) (bookingID, userID, priestID string, err error) {
+	query := `
+		SELECT cr.booking_id::text, cr.user_id::text, COALESCE(cr.priest_id::text, ''),
+		       COALESCE(b.user_id::text, ''), COALESCE(b.priest_id::text, '')
+		FROM chat_rooms cr
+		LEFT JOIN bookings b ON b.id = cr.booking_id
+		WHERE cr.id = $1
+	`
+	var bID, rUID, crPID, bkUID, bkPID string
+	err = s.DB.QueryRow(query, roomID).Scan(&bID, &rUID, &crPID, &bkUID, &bkPID)
+	if err != nil {
+		return "", "", "", fmt.Errorf("chat room not found: %w", err)
+	}
+	effectiveUID := rUID
+	if bkUID != "" {
+		effectiveUID = bkUID
+	}
+	effectivePID := crPID
+	if bkPID != "" {
+		effectivePID = bkPID
+	}
+	return bID, effectiveUID, effectivePID, nil
+}
+
+// VerifyChatRoomParticipant checks whether the authenticated caller is an authorized participant
+// in the booking corresponding to the chat room.
+func (s *Storage) VerifyChatRoomParticipant(roomID, callerID, callerRole string) (string, error) {
+	bookingID, ownerUID, assignedPID, err := s.GetChatRoomParticipants(roomID)
+	if err != nil {
+		return "", err
+	}
+	if callerRole == "devotee" || callerRole == "user" {
+		if ownerUID != callerID {
+			return "", fmt.Errorf("access denied: you are not the devotee for this chat room")
+		}
+		return bookingID, nil
+	}
+	if callerRole == "priest" {
+		if assignedPID == "" || assignedPID != callerID {
+			return "", fmt.Errorf("access denied: you are not the assigned priest for this chat room")
+		}
+		return bookingID, nil
+	}
+	return "", fmt.Errorf("access denied: unknown role %s", callerRole)
+}
+
 // SaveChatMessage persists an incoming message from devotee, priest, or system
 func (s *Storage) SaveChatMessage(msg models.ChatMessage) (string, error) {
+	senderID := msg.SenderID
+	if senderID == "" || senderID == "system" {
+		senderID = "00000000-0000-0000-0000-000000000000"
+	}
 	query := `
 		INSERT INTO chat_messages (room_id, sender_id, sender_role, message_type, content, attachment_url) 
-		VALUES ($1, $2, $3, $4, $5, $6) 
+		VALUES ($1, $2::uuid, $3, $4, $5, $6) 
 		RETURNING id
 	`
 	var id string
 	err := s.DB.QueryRow(
-		query, msg.RoomID, msg.SenderID, msg.SenderRole,
+		query, msg.RoomID, senderID, msg.SenderRole,
 		msg.MessageType, msg.Content, msg.AttachmentURL,
 	).Scan(&id)
 

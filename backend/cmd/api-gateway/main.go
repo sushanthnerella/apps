@@ -3,13 +3,16 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -149,13 +152,70 @@ func enableCORS(next http.Handler) http.Handler {
 	})
 }
 
+// validateOptionalCallerSession checks Bearer authorization when present, ensuring
+// that expired tokens or revoked sessions are immediately rejected.
+func validateOptionalCallerSession(r *http.Request, storage *db.Storage) (*auth.CustomClaims, error) {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+		return nil, nil // Header not provided; full mandatory enforcement deferred to Task 05
+	}
+	tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+	claims, err := auth.ValidateToken(tokenStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid token: %w", err)
+	}
+	dbVersion, err := storage.GetUserSessionVersion(claims.UserID, claims.Role)
+	if err != nil {
+		return nil, fmt.Errorf("session lookup failed: %w", err)
+	}
+	if err := auth.ValidateSessionVersion(claims.SessionVersion, dbVersion); err != nil {
+		return nil, err
+	}
+	return claims, nil
+}
+
+// validateCallerSession strictly enforces that a valid Bearer token is provided
+// and that the active session has not been revoked.
+func validateCallerSession(r *http.Request, storage *db.Storage) (*auth.CustomClaims, error) {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+		return nil, fmt.Errorf("authorization header with Bearer token required")
+	}
+	tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+	claims, err := auth.ValidateToken(tokenStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid token: %w", err)
+	}
+	dbVersion, err := storage.GetUserSessionVersion(claims.UserID, claims.Role)
+	if err != nil {
+		return nil, fmt.Errorf("session lookup failed: %w", err)
+	}
+	if err := auth.ValidateSessionVersion(claims.SessionVersion, dbVersion); err != nil {
+		return nil, err
+	}
+	return claims, nil
+}
+
 func main() {
+	// Load local .env if present without overriding deployment environment values
+	_ = auth.LoadLocalEnv()
+	auth.InitEmailProviderFromEnv()
+
 	pgConnStr := os.Getenv("PG_CONN_STR")
+	if pgConnStr == "" {
+		pgConnStr = os.Getenv("DATABASE_URL")
+	}
 	if pgConnStr == "" {
 		pgConnStr = "postgres://postgres:123456@localhost:5432/purohit_db?sslmode=disable"
 	}
 
 	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = os.Getenv("REDIS_URL")
+	}
+	if redisAddr == "" {
+		redisAddr = os.Getenv("REDISPRIVATEURL")
+	}
 	if redisAddr == "" {
 		redisAddr = "localhost:6379"
 	}
@@ -165,43 +225,86 @@ func main() {
 		log.Fatalf("❌ Failed to initialize database: %v", err)
 	}
 
+	// Initialize JWT configuration from deployment environment (fail fast if missing or unsuitable)
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = os.Getenv("PUROHIT_JWT_SECRET")
+	}
+	if err := auth.InitJWT(jwtSecret); err != nil {
+		log.Fatalf("❌ Fatal: Missing or unsuitable JWT configuration: %v\nPlease set JWT_SECRET environment variable (minimum 32 characters) before starting API Gateway.", err)
+	}
+
+	// Verify required database schema version before starting server
+	requiredSchemaVersion := "000007"
+	if err := storage.VerifySchemaReadiness(requiredSchemaVersion); err != nil {
+		log.Fatalf("❌ Schema readiness check failed: %v\nPlease run the database migration tool before starting the gateway:\n   go run ./cmd/migrate up\nOr to baseline an existing database:\n   go run ./cmd/migrate baseline\n", err)
+	}
+
+	// Configure trusted reverse proxies if specified in environment
+	if tpEnv := os.Getenv("TRUSTED_PROXIES"); tpEnv != "" {
+		proxies := strings.Split(tpEnv, ",")
+		if err := auth.ConfigureTrustedProxies(proxies); err != nil {
+			log.Fatalf("❌ Fatal: Invalid TRUSTED_PROXIES configuration: %v", err)
+		}
+	}
+
 	router := mux.NewRouter()
 
-	// 1. Health check
-	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":    "UP",
-			"timestamp": time.Now().UTC().Format(time.RFC3339),
-			"version":   "2.5.0-jwt-rapido-grid",
-			"postgres":  "CONNECTED",
-			"redis":     "CONNECTED",
-		})
-	}).Methods("GET", "OPTIONS")
+	// 1. Health check endpoints (Truthful request-time probing for Railway and load balancers)
+	registerHealthRoutes(router, storage)
 
-	// 2. Login with OTP & Issue JWT Token
+	// 2. Login with Password & Issue JWT Token (Throttled & Side-Channel Protected)
 	router.HandleFunc("/api/v1/auth/login", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		var req models.LoginRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, `{"error":"invalid login payload"}`, http.StatusBadRequest)
+			http.Error(w, `{"error":"invalid_payload","message":"invalid login request format"}`, http.StatusBadRequest)
 			return
 		}
 
-		if req.Role == "" {
-			req.Role = "devotee"
+		clientIP := auth.ExtractClientIP(r)
+		accountKey := auth.BuildAccountThrottleKey(req.Role, req.Phone)
+
+		// Check rate limiting / brute force throttling
+		if throttled, remaining := auth.DefaultThrottler.IsThrottled(accountKey, clientIP); throttled {
+			w.Header().Set("Retry-After", fmt.Sprintf("%d", int(remaining.Seconds())))
+			http.Error(w, fmt.Sprintf(`{"error":"too_many_requests","message":"Too many failed login attempts. Please try again in %d seconds."}`, int(remaining.Seconds())), http.StatusTooManyRequests)
+			return
 		}
 
-		authRes, err := storage.LoginWithOTP(req.Phone, req.OTP, req.Role)
+		authRes, err := storage.Login(req)
 		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusUnauthorized)
+			if errors.Is(err, auth.ErrRecoveryRequired) {
+				http.Error(w, `{"error":"recovery_required","message":"This account requires password setup/recovery before login. Please use password recovery."}`, http.StatusForbidden)
+				return
+			}
+
+			// Record failure in throttler
+			auth.DefaultThrottler.RecordFailure(accountKey, clientIP)
+
+			if strings.Contains(err.Error(), "role is required") || strings.Contains(err.Error(), "phone number is required") || strings.Contains(err.Error(), "password is required") {
+				http.Error(w, fmt.Sprintf(`{"error":"bad_request","message":"%s"}`, err.Error()), http.StatusBadRequest)
+				return
+			}
+
+			// Return generic invalid credentials (avoid account enumeration)
+			http.Error(w, `{"error":"invalid_credentials","message":"Invalid phone number or password."}`, http.StatusUnauthorized)
 			return
 		}
 
+		// Success: clear failed attempts for this account
+		auth.DefaultThrottler.RecordSuccess(accountKey)
 		json.NewEncoder(w).Encode(authRes)
 	}).Methods("POST", "OPTIONS")
 
-	// 3. User Profile Endpoint (JWT Protected)
+	// 2b. Verified Password Recovery & Email Verification Routes (Modularized in recovery_handlers.go)
+	secret, err := auth.GetSecretKey()
+	if err != nil {
+		log.Fatalf("❌ Fatal: Failed to resolve JWT signing key: %v", err)
+	}
+	registerRecoveryRoutes(router, storage, secret)
+
+	// 3. User Profile Endpoint (JWT Protected with Revocation Validation)
 	router.HandleFunc("/api/v1/user/profile", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		authHeader := r.Header.Get("Authorization")
@@ -214,6 +317,13 @@ func main() {
 		claims, err := auth.ValidateToken(tokenStr)
 		if err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusUnauthorized)
+			return
+		}
+
+		// Validate token session version against current database state
+		dbVersion, err := storage.GetUserSessionVersion(claims.UserID, claims.Role)
+		if err != nil || auth.ValidateSessionVersion(claims.SessionVersion, dbVersion) != nil {
+			http.Error(w, `{"error":"session_revoked","message":"Session has been revoked or expired. Please log in again."}`, http.StatusUnauthorized)
 			return
 		}
 
@@ -258,7 +368,7 @@ func main() {
 		}
 
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"user_location": map[string]float64{"latitude": lat, "longitude": lon},
+			"user_location":        map[string]float64{"latitude": lat, "longitude": lon},
 			"search_radius_meters": radius,
 			"total_priests_online": len(priests),
 			"priests":              priests,
@@ -369,34 +479,49 @@ func main() {
 		json.NewEncoder(w).Encode(catalog)
 	}).Methods("GET", "OPTIONS")
 
-	// 6. Devotee Registration with Consent
+	// 6. Devotee Registration with Explicit Consent & Password
 	router.HandleFunc("/api/v1/auth/register-devotee", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		var req models.DevoteeRegistrationRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, `{"error":"invalid request format"}`, http.StatusBadRequest)
+			http.Error(w, `{"error":"invalid_payload","message":"invalid request format"}`, http.StatusBadRequest)
 			return
 		}
 
-		// Devotee registration on this endpoint accepts terms of service
-		req.ConsentAgreed = true
+		if !req.ConsentAgreed {
+			http.Error(w, `{"error":"consent_required","message":"Devotee terms and ritual consent are mandatory."}`, http.StatusBadRequest)
+			return
+		}
 
 		userID, err := storage.RegisterDevotee(req)
 		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
+			if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "already registered") {
+				http.Error(w, fmt.Sprintf(`{"error":"account_already_exists","message":"%s"}`, err.Error()), http.StatusConflict)
+				return
+			}
+			if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "mandatory") || strings.Contains(err.Error(), "password") || strings.Contains(err.Error(), "invalid") {
+				http.Error(w, fmt.Sprintf(`{"error":"bad_request","message":"%s"}`, err.Error()), http.StatusBadRequest)
+				return
+			}
+			http.Error(w, `{"error":"internal_server_error","message":"Registration failed. Please try again."}`, http.StatusInternalServerError)
 			return
 		}
 
-		token, _ := auth.GenerateToken(userID, req.Phone, "devotee", req.FullName)
+		canonicalPhone, _ := auth.NormalizePhone(req.Phone)
+		token, err := auth.GenerateToken(userID, canonicalPhone, "devotee", req.FullName, 1)
+		if err != nil {
+			http.Error(w, `{"error":"token_generation_failed","message":"Account created but session generation failed."}`, http.StatusInternalServerError)
+			return
+		}
 
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":         "SUCCESS",
-			"user_id":        userID,
-			"access_token":   token,
-			"token_type":     "Bearer",
+			"status":       "SUCCESS",
+			"user_id":      userID,
+			"access_token": token,
+			"token_type":   "Bearer",
 			"user": map[string]interface{}{
 				"id":             userID,
-				"phone":          req.Phone,
+				"phone":          canonicalPhone,
 				"full_name":      req.FullName,
 				"gotram":         req.Gotram,
 				"nakshatram":     req.Nakshatram,
@@ -411,27 +536,40 @@ func main() {
 		})
 	}).Methods("POST", "OPTIONS")
 
-	// 7. Priest Registration with Consent
+	// 7. Priest Registration with Consent & Password (Approval Kept Separate)
 	router.HandleFunc("/api/v1/auth/register-priest", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		var req models.PriestRegistrationRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, `{"error":"invalid request format"}`, http.StatusBadRequest)
+			http.Error(w, `{"error":"invalid_payload","message":"invalid request format"}`, http.StatusBadRequest)
 			return
 		}
 
 		if !req.ConsentAgreed {
-			http.Error(w, `{"error":"purohit code of conduct consent is mandatory"}`, http.StatusBadRequest)
+			http.Error(w, `{"error":"consent_required","message":"purohit code of conduct consent is mandatory"}`, http.StatusBadRequest)
 			return
 		}
 
 		priestID, err := storage.RegisterPriest(req)
 		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
+			if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "already registered") {
+				http.Error(w, fmt.Sprintf(`{"error":"account_already_exists","message":"%s"}`, err.Error()), http.StatusConflict)
+				return
+			}
+			if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "mandatory") || strings.Contains(err.Error(), "password") || strings.Contains(err.Error(), "invalid") {
+				http.Error(w, fmt.Sprintf(`{"error":"bad_request","message":"%s"}`, err.Error()), http.StatusBadRequest)
+				return
+			}
+			http.Error(w, `{"error":"internal_server_error","message":"Registration failed. Please try again."}`, http.StatusInternalServerError)
 			return
 		}
 
-		token, _ := auth.GenerateToken(priestID, req.Phone, "priest", req.FullName)
+		canonicalPhone, _ := auth.NormalizePhone(req.Phone)
+		token, err := auth.GenerateToken(priestID, canonicalPhone, "priest", req.FullName, 1)
+		if err != nil {
+			http.Error(w, `{"error":"token_generation_failed","message":"Account created but session generation failed."}`, http.StatusInternalServerError)
+			return
+		}
 
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"status":         "SUCCESS",
@@ -451,53 +589,8 @@ func main() {
 		json.NewEncoder(w).Encode(todayPanchangam)
 	}).Methods("GET", "OPTIONS")
 
-	// 9. Create Booking with Escrow
-	router.HandleFunc("/api/v1/bookings", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		var req models.BookingCreateRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, `{"error":"invalid booking payload"}`, http.StatusBadRequest)
-			return
-		}
-
-		bookingID, otp, err := storage.CreateBooking(req)
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
-			return
-		}
-
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"booking_id":     bookingID,
-			"status":         "REQUESTED",
-			"escrow_status":  "HELD_IN_ESCROW",
-			"completion_otp": otp,
-			"total_amount":   req.TotalAmount,
-			"message":        "Booking initialized. Payment held in secure escrow.",
-		})
-	}).Methods("POST", "OPTIONS")
-
-	// 10. Update Booking Status / Escrow Release
-	router.HandleFunc("/api/v1/bookings/status", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		var req models.BookingStatusUpdateRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, `{"error":"invalid request payload"}`, http.StatusBadRequest)
-			return
-		}
-
-		escrowResult, err := storage.UpdateBookingStatus(req)
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusBadRequest)
-			return
-		}
-
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"booking_id":    req.BookingID,
-			"new_status":    req.Status,
-			"escrow_status": escrowResult,
-			"message":       "Booking status updated successfully",
-		})
-	}).Methods("POST", "OPTIONS")
+	// 9. Protected Booking Lifecycle, Asymmetric Completion OTP & Admin Emergency Cancel Routes (Task 06)
+	registerBookingRoutes(router, storage)
 
 	// 11. WebRTC Signaling WebSocket
 	router.HandleFunc("/ws/webrtc", func(w http.ResponseWriter, r *http.Request) {
@@ -689,9 +782,9 @@ func main() {
 			return
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":               "SUCCESS",
+			"status":              "SUCCESS",
 			"services_translated": count,
-			"message":              fmt.Sprintf("Auto-translated %d services into Telugu & Hindi", count),
+			"message":             fmt.Sprintf("Auto-translated %d services into Telugu & Hindi", count),
 		})
 	}).Methods("POST", "OPTIONS")
 
@@ -736,49 +829,6 @@ func main() {
 		}
 		json.NewEncoder(w).Encode(map[string]string{"status": "DELETED", "id": itemID})
 	}).Methods("DELETE", "OPTIONS")
-
-	// 14b. Booking Specific Materials (Devotee & Priest Live Checklist)
-	router.HandleFunc("/api/v1/bookings/{id}/materials", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		vars := mux.Vars(r)
-		bookingID := vars["id"]
-
-		if r.Method == "POST" {
-			var body struct {
-				Materials []models.BookingMaterial `json:"materials"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				http.Error(w, `{"error":"invalid materials format"}`, http.StatusBadRequest)
-				return
-			}
-			if err := storage.UpdateBookingMaterials(bookingID, body.Materials); err != nil {
-				http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
-				return
-			}
-			json.NewEncoder(w).Encode(map[string]string{"status": "UPDATED", "booking_id": bookingID})
-			return
-		}
-
-		materials, err := storage.GetBookingMaterials(bookingID)
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
-			return
-		}
-		json.NewEncoder(w).Encode(materials)
-	}).Methods("GET", "POST", "OPTIONS")
-
-	// 14c. Full Booking Details (Address, Devotee phone, Priest info, Status)
-	router.HandleFunc("/api/v1/bookings/{id}", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		vars := mux.Vars(r)
-		bookingID := vars["id"]
-		details, err := storage.GetBookingDetails(bookingID)
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusNotFound)
-			return
-		}
-		json.NewEncoder(w).Encode(details)
-	}).Methods("GET", "OPTIONS")
 
 	// 15. Local Puja Store Vendors & Inventory
 	router.HandleFunc("/api/v1/store/vendors", func(w http.ResponseWriter, r *http.Request) {
@@ -863,160 +913,8 @@ func main() {
 		})
 	}).Methods("PUT", "OPTIONS")
 
-	// 17. Real-Time In-App Chat
-	router.HandleFunc("/api/v1/chat/rooms", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		var body struct {
-			BookingID string `json:"booking_id"`
-			UserID    string `json:"user_id"`
-			PriestID  string `json:"priest_id"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, `{"error":"invalid room payload"}`, http.StatusBadRequest)
-			return
-		}
-		roomID, err := storage.GetOrCreateChatRoom(body.BookingID, body.UserID, body.PriestID)
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
-			return
-		}
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"room_id":    roomID,
-			"booking_id": body.BookingID,
-		})
-	}).Methods("POST", "OPTIONS")
-
-	router.HandleFunc("/api/v1/chat/messages", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.Method == "POST" {
-			var msg models.ChatMessage
-			if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
-				http.Error(w, `{"error":"invalid message payload"}`, http.StatusBadRequest)
-				return
-			}
-			if msg.MessageType == "" {
-				msg.MessageType = "TEXT"
-			}
-			msgID, err := storage.SaveChatMessage(msg)
-			if err != nil {
-				http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
-				return
-			}
-			msg.ID = msgID
-			msgBytes, _ := json.Marshal(msg)
-			chatHub.BroadcastToRoom(msg.SenderID, msg.RoomID, msgBytes)
-
-			json.NewEncoder(w).Encode(msg)
-			return
-		}
-
-		roomID := r.URL.Query().Get("room_id")
-		messages, err := storage.GetChatMessages(roomID)
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
-			return
-		}
-		json.NewEncoder(w).Encode(messages)
-	}).Methods("GET", "POST", "OPTIONS")
-
-	router.HandleFunc("/api/v1/chat/room-by-booking", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		bookingID := r.URL.Query().Get("booking_id")
-		userID := r.URL.Query().Get("user_id")
-		priestID := r.URL.Query().Get("priest_id")
-		roomID, err := storage.GetOrCreateChatRoom(bookingID, userID, priestID)
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
-			return
-		}
-		json.NewEncoder(w).Encode(map[string]string{
-			"room_id":    roomID,
-			"booking_id": bookingID,
-		})
-	}).Methods("GET", "OPTIONS")
-
-	router.HandleFunc("/ws/chat", func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			return
-		}
-		roomID := r.URL.Query().Get("roomId")
-		clientID := r.URL.Query().Get("clientId")
-		role := r.URL.Query().Get("role")
-		if role == "" {
-			role = "devotee"
-		}
-
-		if roomID == "" || clientID == "" {
-			conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"missing roomId or clientId"}`))
-			conn.Close()
-			return
-		}
-
-		client := &Client{
-			ID:     clientID,
-			RoomID: roomID,
-			Conn:   conn,
-			Send:   make(chan []byte, 256),
-		}
-
-		chatHub.Register(client)
-
-		go func() {
-			defer conn.Close()
-			for msg := range client.Send {
-				if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
-					break
-				}
-			}
-		}()
-
-		defer func() {
-			chatHub.Unregister(client)
-			conn.Close()
-		}()
-
-		for {
-			_, message, err := conn.ReadMessage()
-			if err != nil {
-				break
-			}
-
-			var msg models.ChatMessage
-			if err := json.Unmarshal(message, &msg); err == nil {
-				msg.RoomID = roomID
-				msg.SenderID = clientID
-				msg.SenderRole = role
-				msgID, _ := storage.SaveChatMessage(msg)
-				msg.ID = msgID
-
-				broadcastData, _ := json.Marshal(msg)
-				chatHub.BroadcastToRoom(clientID, roomID, broadcastData)
-			}
-		}
-	})
-
-	// 18. Priest Referral & Instant Reassignment
-	router.HandleFunc("/api/v1/bookings/refer", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		var req models.PriestReferralRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, `{"error":"invalid referral payload"}`, http.StatusBadRequest)
-			return
-		}
-		referralID, err := storage.ReferPriest(req)
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusBadRequest)
-			return
-		}
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":             "REASSIGNED",
-			"referral_id":        referralID,
-			"booking_id":         req.BookingID,
-			"referred_priest_id": req.ReferredPriestID,
-			"message":            "Booking auto-reassigned instantly to colleague purohit",
-		})
-	}).Methods("POST", "OPTIONS")
+	// 17. Real-Time In-App Chat (Authenticated & Authorized Participant Enforced)
+	registerChatRoutes(router, storage)
 
 	// 19. Sacred Temples & VIP Ticketing
 	router.HandleFunc("/api/v1/temples", func(w http.ResponseWriter, r *http.Request) {
@@ -1071,45 +969,10 @@ func main() {
 			return
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"is_valid":            true,
-			"ticket":              ticket,
-			"check_in_timestamp":  ticket.CheckInTimestamp,
+			"is_valid":             true,
+			"ticket":               ticket,
+			"check_in_timestamp":   ticket.CheckInTimestamp,
 			"verification_latency": "< 50ms (zero-lag offline cryptographically verified)",
-		})
-	}).Methods("POST", "OPTIONS")
-
-	// 20. Swiggy / Rapido Cancellation & Dynamic Refund Breakdown
-	router.HandleFunc("/api/v1/bookings/{id}/cancel-quote", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		vars := mux.Vars(r)
-		bookingID := vars["id"]
-		quote, err := storage.GetCancellationQuote(bookingID)
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusBadRequest)
-			return
-		}
-		json.NewEncoder(w).Encode(quote)
-	}).Methods("GET", "OPTIONS")
-
-	router.HandleFunc("/api/v1/bookings/cancel", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		var req models.CancelBookingRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, `{"error":"invalid cancellation request"}`, http.StatusBadRequest)
-			return
-		}
-		quote, err := storage.CancelBookingWithRefund(req)
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusBadRequest)
-			return
-		}
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":              "CANCELLED",
-			"booking_id":          req.BookingID,
-			"refund_amount":       quote.RefundAmount,
-			"priest_compensation": quote.PriestCompensation,
-			"policy_notice":       quote.PolicyNotice,
-			"message":             "Booking cancelled and refund calculated per cancellation tier",
 		})
 	}).Methods("POST", "OPTIONS")
 
@@ -1122,13 +985,286 @@ func main() {
 	if !strings.HasPrefix(port, ":") {
 		port = ":" + port
 	}
+	sanitizedRedis := db.SanitizeRedisEndpoint(redisAddr)
 	fmt.Println("==================================================================")
 	fmt.Printf("🕉️  PUJA VAAHINI UNIFIED BACKEND GATEWAY v2.5\n")
-	fmt.Printf("   PostgreSQL Database: Connected (purohit_db)\n")
-	fmt.Printf("   Redis Geo Cache:     Connected (localhost:6379)\n")
+	fmt.Printf("   PostgreSQL Database: Connected\n")
+	fmt.Printf("   Redis Geo Cache:     Connected (%s)\n", sanitizedRedis)
 	fmt.Printf("   JWT Security:        HS256 Active\n")
 	fmt.Printf("   Port:                %s\n", port)
 	fmt.Println("==================================================================")
 
-	log.Fatal(http.ListenAndServe(port, handler))
+	server := &http.Server{Addr: port, Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			log.Printf("server shutdown: %v", err)
+		}
+	}()
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatal(err)
+	}
+	_ = storage.Redis.Close()
+	_ = storage.DB.Close()
+}
+
+// registerChatRoutes mounts authenticated and participant-protected chat endpoints
+func registerChatRoutes(router *mux.Router, storage *db.Storage) {
+	router.HandleFunc("/api/v1/chat/rooms", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		claims, err := requireCallerSession(r, storage)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"unauthorized","message":"%v"}`, err), http.StatusUnauthorized)
+			return
+		}
+
+		var body struct {
+			BookingID string `json:"booking_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.BookingID == "" {
+			http.Error(w, `{"error":"invalid room payload: booking_id is required"}`, http.StatusBadRequest)
+			return
+		}
+
+		ownerUID, assignedPID, err := storage.VerifyBookingParticipant(body.BookingID, claims.UserID, claims.Role)
+		if err != nil {
+			if strings.Contains(err.Error(), "booking not found") {
+				http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusNotFound)
+			} else {
+				http.Error(w, fmt.Sprintf(`{"error":"forbidden","message":"%v"}`, err), http.StatusForbidden)
+			}
+			return
+		}
+
+		roomID, err := storage.GetOrCreateChatRoom(body.BookingID, ownerUID, assignedPID)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"room_id":    roomID,
+			"booking_id": body.BookingID,
+		})
+	}).Methods("POST", "OPTIONS")
+
+	router.HandleFunc("/api/v1/chat/messages", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		claims, err := requireCallerSession(r, storage)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"unauthorized","message":"%v"}`, err), http.StatusUnauthorized)
+			return
+		}
+
+		if r.Method == "POST" {
+			var msg models.ChatMessage
+			if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
+				http.Error(w, `{"error":"invalid message payload"}`, http.StatusBadRequest)
+				return
+			}
+			if msg.RoomID == "" {
+				http.Error(w, `{"error":"missing room_id"}`, http.StatusBadRequest)
+				return
+			}
+
+			_, err := storage.VerifyChatRoomParticipant(msg.RoomID, claims.UserID, claims.Role)
+			if err != nil {
+				if strings.Contains(err.Error(), "chat room not found") {
+					http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusNotFound)
+				} else {
+					http.Error(w, fmt.Sprintf(`{"error":"forbidden","message":"%v"}`, err), http.StatusForbidden)
+				}
+				return
+			}
+
+			// Invariant: Never trust client-supplied sender IDs or roles!
+			msg.SenderID = claims.UserID
+			if claims.Role == "priest" {
+				msg.SenderRole = "PRIEST"
+			} else {
+				msg.SenderRole = "DEVOTEE"
+			}
+			if msg.MessageType == "" {
+				msg.MessageType = "TEXT"
+			}
+
+			msgID, err := storage.SaveChatMessage(msg)
+			if err != nil {
+				http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
+				return
+			}
+			msg.ID = msgID
+			msgBytes, _ := json.Marshal(msg)
+			chatHub.BroadcastToRoom(msg.SenderID, msg.RoomID, msgBytes)
+
+			json.NewEncoder(w).Encode(msg)
+			return
+		}
+
+		roomID := r.URL.Query().Get("room_id")
+		if roomID == "" {
+			http.Error(w, `{"error":"missing room_id parameter"}`, http.StatusBadRequest)
+			return
+		}
+
+		_, err = storage.VerifyChatRoomParticipant(roomID, claims.UserID, claims.Role)
+		if err != nil {
+			if strings.Contains(err.Error(), "chat room not found") {
+				http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusNotFound)
+			} else {
+				http.Error(w, fmt.Sprintf(`{"error":"forbidden","message":"%v"}`, err), http.StatusForbidden)
+			}
+			return
+		}
+
+		messages, err := storage.GetChatMessages(roomID)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
+			return
+		}
+		if messages == nil {
+			messages = []models.ChatMessage{}
+		}
+		json.NewEncoder(w).Encode(messages)
+	}).Methods("GET", "POST", "OPTIONS")
+
+	router.HandleFunc("/api/v1/chat/room-by-booking", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		claims, err := requireCallerSession(r, storage)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"unauthorized","message":"%v"}`, err), http.StatusUnauthorized)
+			return
+		}
+
+		bookingID := r.URL.Query().Get("booking_id")
+		if bookingID == "" {
+			http.Error(w, `{"error":"missing booking_id parameter"}`, http.StatusBadRequest)
+			return
+		}
+
+		ownerUID, assignedPID, err := storage.VerifyBookingParticipant(bookingID, claims.UserID, claims.Role)
+		if err != nil {
+			if strings.Contains(err.Error(), "booking not found") {
+				http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusNotFound)
+			} else {
+				http.Error(w, fmt.Sprintf(`{"error":"forbidden","message":"%v"}`, err), http.StatusForbidden)
+			}
+			return
+		}
+
+		roomID, err := storage.GetOrCreateChatRoom(bookingID, ownerUID, assignedPID)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{
+			"room_id":    roomID,
+			"booking_id": bookingID,
+		})
+	}).Methods("GET", "OPTIONS")
+
+	router.HandleFunc("/ws/chat", func(w http.ResponseWriter, r *http.Request) {
+		// 1. Authenticate caller: check Authorization header, or token/authToken query parameter
+		var tokenStr string
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			tokenStr = strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+		}
+		if tokenStr == "" {
+			tokenStr = r.URL.Query().Get("token")
+		}
+		if tokenStr == "" {
+			tokenStr = r.URL.Query().Get("authToken")
+		}
+		if tokenStr == "" {
+			http.Error(w, `{"error":"unauthorized","message":"missing bearer token or token query parameter"}`, http.StatusUnauthorized)
+			return
+		}
+
+		claims, err := auth.ValidateToken(tokenStr)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"unauthorized","message":"%v"}`, err), http.StatusUnauthorized)
+			return
+		}
+		dbVersion, err := storage.GetUserSessionVersion(claims.UserID, claims.Role)
+		if err != nil || auth.ValidateSessionVersion(claims.SessionVersion, dbVersion) != nil {
+			http.Error(w, `{"error":"unauthorized","message":"session expired or revoked"}`, http.StatusUnauthorized)
+			return
+		}
+
+		roomID := r.URL.Query().Get("roomId")
+		if roomID == "" {
+			http.Error(w, `{"error":"bad_request","message":"missing roomId query parameter"}`, http.StatusBadRequest)
+			return
+		}
+
+		_, err = storage.VerifyChatRoomParticipant(roomID, claims.UserID, claims.Role)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"forbidden","message":"%v"}`, err), http.StatusForbidden)
+			return
+		}
+
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+
+		// Invariant: Never trust client-supplied sender ID or role!
+		clientID := claims.UserID
+		var role string
+		if claims.Role == "priest" {
+			role = "PRIEST"
+		} else {
+			role = "DEVOTEE"
+		}
+
+		client := &Client{
+			ID:     clientID,
+			RoomID: roomID,
+			Conn:   conn,
+			Send:   make(chan []byte, 256),
+		}
+
+		chatHub.Register(client)
+
+		go func() {
+			defer conn.Close()
+			for msg := range client.Send {
+				if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+					break
+				}
+			}
+		}()
+
+		defer func() {
+			chatHub.Unregister(client)
+			conn.Close()
+		}()
+
+		for {
+			_, message, err := conn.ReadMessage()
+			if err != nil {
+				break
+			}
+
+			var msg models.ChatMessage
+			if err := json.Unmarshal(message, &msg); err == nil {
+				msg.RoomID = roomID
+				// Server-enforced identity
+				msg.SenderID = clientID
+				msg.SenderRole = role
+				if msg.MessageType == "" {
+					msg.MessageType = "TEXT"
+				}
+				msgID, _ := storage.SaveChatMessage(msg)
+				msg.ID = msgID
+
+				broadcastData, _ := json.Marshal(msg)
+				chatHub.BroadcastToRoom(clientID, roomID, broadcastData)
+			}
+		}
+	})
 }
