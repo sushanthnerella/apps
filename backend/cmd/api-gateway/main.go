@@ -367,6 +367,9 @@ func main() {
 			return
 		}
 
+		if priests == nil {
+			priests = []models.NearbyPriest{}
+		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"user_location":        map[string]float64{"latitude": lat, "longitude": lon},
 			"search_radius_meters": radius,
@@ -591,6 +594,7 @@ func main() {
 
 	// 9. Protected Booking Lifecycle, Asymmetric Completion OTP & Admin Emergency Cancel Routes (Task 06)
 	registerBookingRoutes(router, storage)
+	registerDutyRoutes(router, storage)
 
 	// 11. WebRTC Signaling WebSocket
 	router.HandleFunc("/ws/webrtc", func(w http.ResponseWriter, r *http.Request) {
@@ -666,9 +670,22 @@ func main() {
 		}
 
 		if r.Method == "POST" {
+			claims, err := validateCallerSession(r, storage)
+			if err != nil {
+				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+				return
+			}
+			if claims.Role != "priest" {
+				http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+				return
+			}
 			var req models.CreateSlotRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				http.Error(w, `{"error":"invalid slot payload"}`, http.StatusBadRequest)
+				return
+			}
+			if req.PriestID != claims.UserID {
+				http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 				return
 			}
 			slotID, err := storage.CreatePriestSlot(req)
@@ -687,11 +704,25 @@ func main() {
 
 	router.HandleFunc("/api/v1/priests/slots/hold", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		claims, err := validateCallerSession(r, storage)
+		if err != nil {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		if claims.Role != "devotee" {
+			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+			return
+		}
 		var req models.HoldSlotRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, `{"error":"invalid hold request"}`, http.StatusBadRequest)
 			return
 		}
+		if req.DevoteeID != "" && req.DevoteeID != claims.UserID {
+			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+			return
+		}
+		req.DevoteeID = claims.UserID
 		success, expiresAt, err := storage.HoldPriestSlot(req.SlotID, req.DevoteeID, req.HoldDurationSeconds)
 		if err != nil || !success {
 			http.Error(w, fmt.Sprintf(`{"error":"slot cannot be held: %v"}`, err), http.StatusConflict)
