@@ -235,7 +235,7 @@ func main() {
 	}
 
 	// Verify required database schema version before starting server
-	requiredSchemaVersion := "000007"
+	requiredSchemaVersion := "000008"
 	if err := storage.VerifySchemaReadiness(requiredSchemaVersion); err != nil {
 		log.Fatalf("❌ Schema readiness check failed: %v\nPlease run the database migration tool before starting the gateway:\n   go run ./cmd/migrate up\nOr to baseline an existing database:\n   go run ./cmd/migrate baseline\n", err)
 	}
@@ -347,16 +347,13 @@ func main() {
 		radiusStr := r.URL.Query().Get("radius")
 		serviceFilter := r.URL.Query().Get("service")
 
-		lat := 17.3850
-		lon := 78.4867
-		radius := 50000.0 // 50km metro radius default
-
-		if v, err := strconv.ParseFloat(latStr, 64); err == nil && v != 0 {
-			lat = v
+		lat, latErr := strconv.ParseFloat(latStr, 64)
+		lon, lonErr := strconv.ParseFloat(lonStr, 64)
+		if latErr != nil || lonErr != nil || !validLocation(lat, lon) {
+			http.Error(w, `{"error":"location_required"}`, http.StatusBadRequest)
+			return
 		}
-		if v, err := strconv.ParseFloat(lonStr, 64); err == nil && v != 0 {
-			lon = v
-		}
+		radius := 50000.0
 		if v, err := strconv.ParseFloat(radiusStr, 64); err == nil && v != 0 {
 			radius = v
 		}
@@ -595,6 +592,7 @@ func main() {
 	// 9. Protected Booking Lifecycle, Asymmetric Completion OTP & Admin Emergency Cancel Routes (Task 06)
 	registerBookingRoutes(router, storage)
 	registerDutyRoutes(router, storage)
+	registerPriestLocationRoutes(router, storage)
 
 	// 11. WebRTC Signaling WebSocket
 	router.HandleFunc("/ws/webrtc", func(w http.ResponseWriter, r *http.Request) {

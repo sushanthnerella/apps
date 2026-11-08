@@ -924,8 +924,8 @@ func TestValidExistingDataSurvivesUpgrade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Up failed: %v", err)
 	}
-	if applied != 4 {
-		t.Errorf("expected 4 migrations applied (000004, 000005, 000006, 000007), got %d", applied)
+	if applied != 5 {
+		t.Errorf("expected 5 migrations applied (000004 through 000008), got %d", applied)
 	}
 
 	// Verify all pre-existing records survive intact
@@ -1297,27 +1297,27 @@ func TestLockOwnershipDiscardConnSafelyDestroysSessionOnFailure(t *testing.T) {
 	_ = conn2
 }
 
-// 22. Acceptance Test: Startup readiness verifies valid schema 000007 completely
+// 22. Acceptance Test: Startup readiness verifies valid schema 000008 completely
 func TestStartupReadinessValidSchema(t *testing.T) {
 	db, _ := createIsolatedTestDB(t)
 	ctx := context.Background()
 	migrator := New(db, getMigrationsDir(t), getSeedsDir(t))
 
-	// Up to latest version (includes 000007 verified email support)
+	// Up to latest version (includes 000008 priest location confirmation)
 	applied, err := migrator.Up(ctx, false)
 	if err != nil {
 		t.Fatalf("Up failed: %v", err)
 	}
-	if applied < 7 {
-		t.Fatalf("expected at least 7 migrations applied, got %d", applied)
+	if applied < 8 {
+		t.Fatalf("expected at least 8 migrations applied, got %d", applied)
 	}
 
-	if err := migrator.VerifyReadiness(ctx, "000007"); err != nil {
+	if err := migrator.VerifyReadiness(ctx, "000008"); err != nil {
 		t.Fatalf("expected VerifyReadiness to pass on valid schema, got: %v", err)
 	}
 }
 
-// 23. Acceptance Test: Startup readiness rejects history gap even when latest version 000007 is present
+// 23. Acceptance Test: Startup readiness rejects history gap even when latest version 000008 is present
 func TestStartupReadinessHistoryGapFailsDespiteLatestVersion(t *testing.T) {
 	db, _ := createIsolatedTestDB(t)
 	ctx := context.Background()
@@ -1334,14 +1334,14 @@ func TestStartupReadinessHistoryGapFailsDespiteLatestVersion(t *testing.T) {
 		t.Fatalf("failed deleting migration: %v", err)
 	}
 
-	// Latest version in schema_migrations is 000007, but intermediate version 000004 is missing
+	// Latest version in schema_migrations is 000008, but intermediate version 000004 is missing
 	var maxVer string
 	_ = db.QueryRowContext(ctx, "SELECT MAX(version) FROM schema_migrations").Scan(&maxVer)
-	if maxVer != "000007" {
-		t.Fatalf("expected max version to be 000007, got %s", maxVer)
+	if maxVer != "000008" {
+		t.Fatalf("expected max version to be 000008, got %s", maxVer)
 	}
 
-	err = migrator.VerifyReadiness(ctx, "000007")
+	err = migrator.VerifyReadiness(ctx, "000008")
 	if err == nil {
 		t.Fatalf("expected VerifyReadiness to fail on missing intermediate migration 000004, but succeeded")
 	}
@@ -1367,7 +1367,7 @@ func TestStartupReadinessPhysicalIncompatibilityFails(t *testing.T) {
 		t.Fatalf("failed dropping table: %v", err)
 	}
 
-	err = migrator.VerifyReadiness(ctx, "000007")
+	err = migrator.VerifyReadiness(ctx, "000008")
 	if err == nil {
 		t.Fatalf("expected VerifyReadiness to fail when required table is missing, but succeeded")
 	}

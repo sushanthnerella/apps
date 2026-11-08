@@ -288,16 +288,12 @@ func (s *Storage) GetNearbyPriests(devLat, devLon, radiusMeters float64, service
 	if radiusMeters <= 0 {
 		radiusMeters = 50000.0 // 50km default radius for metro region
 	}
-	if devLat == 0 && devLon == 0 {
-		devLat = 17.3850
-		devLon = 78.4867
-	}
 
 	query := `
 		SELECT id, full_name, phone, sampradaya, veda_shakha, rating_avg, total_completed_poojas, repeat_booking_count,
 		       latitude, longitude, eta_minutes, vehicle_type, services_offered
 		FROM priests
-		WHERE is_online = true;
+		WHERE is_online = true AND location_confirmed = true;
 	`
 	rows, err := s.DB.Query(query)
 	if err != nil {
@@ -322,11 +318,6 @@ func (s *Storage) GetNearbyPriests(devLat, devLon, radiusMeters float64, service
 		p.ServicesOffered = []string(services)
 		if len(p.ServicesOffered) == 0 {
 			p.ServicesOffered = []string{"Gruhapravesam (House Warming)", "Sri Satyanarayana Swamy Vratam", "Maha Ganapathi Homa / Yagam", "Navagraha Shanti Homa"}
-		}
-
-		if p.Latitude == 0 && p.Longitude == 0 {
-			p.Latitude = 17.3860
-			p.Longitude = 78.4875
 		}
 
 		// Compute Haversine Geodesic Distance
@@ -678,11 +669,6 @@ func (s *Storage) RegisterPriest(req models.PriestRegistrationRequest) (string, 
 		return "", fmt.Errorf("phone number %s is already registered as a devotee; cannot create priest profile", auth.MaskPhone(req.Phone))
 	}
 
-	if req.Latitude == 0 && req.Longitude == 0 {
-		req.Latitude = 17.3850 + (rand.Float64()-0.5)*0.015
-		req.Longitude = 78.4867 + (rand.Float64()-0.5)*0.015
-	}
-
 	vedaShakha := strings.TrimSpace(req.VedaShakha)
 	if vedaShakha == "" {
 		vedaShakha = "Rigveda"
@@ -773,12 +759,6 @@ func (s *Storage) CreateBooking(req models.BookingCreateRequest) (string, string
 
 	if req.EventAddress == "" {
 		req.EventAddress = "Plot 42, Sri Rama Nagar, Madhav Nagar, Hyderabad (Landmark: Near Sri Rama Temple)"
-	}
-	if req.Latitude == 0 {
-		req.Latitude = 17.3850
-	}
-	if req.Longitude == 0 {
-		req.Longitude = 78.4867
 	}
 	if req.BookingType == "" {
 		req.BookingType = "INSTANT_DISPATCH"
