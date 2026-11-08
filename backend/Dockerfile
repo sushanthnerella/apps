@@ -58,4 +58,4 @@ ENV PORT=8085 \
 HEALTHCHECK --interval=15s --timeout=3s --start-period=5s --retries=3 \
     CMD sh -c 'curl -f http://127.0.0.1:${PORT:-8085}/health || exit 1'
 
-ENTRYPOINT ["/app/api-gateway"]
+CMD ["/bin/sh", "-c", "/app/migrate up && exec /app/api-gateway"]
