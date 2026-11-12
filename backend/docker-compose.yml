@@ -7,18 +7,20 @@ services:
     environment:
       POSTGRES_DB: purohit_db
       POSTGRES_USER: purohit_admin
-      POSTGRES_PASSWORD: purohit_secure_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./migrations:/docker-entrypoint-initdb.d
 
   redis:
     image: redis/redis-stack-server:latest
+    environment:
+      REDIS_ARGS: "--requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD}"
     container_name: purohit_redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redisdata:/data
 
@@ -39,7 +41,7 @@ services:
       - --max-port=65535
       - --fingerprint
       - --lt-cred-mech
-      - --user=purohit_user:purohit_turn_key
+      - --user=${TURN_USER:?Set TURN_USER}:${TURN_PASSWORD:?Set TURN_PASSWORD}
 
 volumes:
   pgdata:

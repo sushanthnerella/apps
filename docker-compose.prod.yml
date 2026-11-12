@@ -11,9 +11,9 @@ services:
     environment:
       POSTGRES_DB: purohit_db
       POSTGRES_USER: purohit_admin
-      POSTGRES_PASSWORD: purohit_secure_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./backend/migrations:/docker-entrypoint-initdb.d
@@ -28,10 +28,13 @@ services:
   # ----------------------------------------------------------------------------
   redis:
     image: redis/redis-stack-server:latest
+    environment:
+      REDIS_ARGS: "--requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD}"
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?Set REDIS_PASSWORD}
     container_name: purohit_redis
     restart: always
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redisdata:/data
     healthcheck:
@@ -61,7 +64,7 @@ services:
       - --max-port=65535
       - --fingerprint
       - --lt-cred-mech
-      - --user=purohit_user:purohit_turn_key
+      - --user=${TURN_USER:?Set TURN_USER}:${TURN_PASSWORD:?Set TURN_PASSWORD}
 
   # ----------------------------------------------------------------------------
   # 4. Go Unified Backend API Gateway
@@ -81,13 +84,11 @@ services:
       - "8085:8085"
     environment:
       - PORT=8085
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_USER=purohit_admin
-      - DB_PASSWORD=purohit_secure_password
-      - DB_NAME=purohit_db
+      - PG_CONN_STR=${PG_CONN_STR:?Set PG_CONN_STR for the compose PostgreSQL service}
       - REDIS_ADDR=redis:6379
-      - JWT_SECRET=purohit_sacred_jwt_secret_key_2026
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?Set REDIS_PASSWORD}
+      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:?Set ALLOWED_ORIGINS}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8085/health"]
       interval: 15s
@@ -109,7 +110,8 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=production
-      - NEXT_PUBLIC_API_URL=http://api-gateway:8085
+      - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8085}
+      - NEXT_PUBLIC_API_URL=${PUBLIC_API_URL:?Set HTTPS PUBLIC_API_URL}
     healthcheck:
       test: ["CMD", "wget", "--spider", "http://localhost:3000/"]
       interval: 20s

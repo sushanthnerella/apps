@@ -234,31 +234,36 @@ SELECT id, 'Live Temple E-Pooja Video Call (Two-Way Sankalpam)', 'Personalized W
 FROM temples WHERE slug = 'dhapurmari-temple'
 AND NOT EXISTS (SELECT 1 FROM temple_vip_pujas WHERE title LIKE 'Live Temple E-Pooja%');
 
--- Seed Sample Local Pooja Store Vendors
-INSERT INTO vendors (shop_name, owner_name, phone, address, city, latitude, longitude, rating_avg)
-VALUES (
-    'Sri Sai Vedic Pooja Store & Samagri Center',
-    'Ramesh Kumar Sharma',
-    '+91 98490 55443',
-    'Shop #4, Near Temple Arch, Main Road, Hyderabad',
-    'Hyderabad',
-    17.3860,
-    78.4875,
-    4.95
-) ON CONFLICT (phone) DO NOTHING;
+-- Seed Sample Local Pooja Store Vendors (gated: only executed when purohit.seed_demo is enabled)
+DO $$
+BEGIN
+    IF current_setting('purohit.seed_demo', true) = 'true' THEN
+        INSERT INTO vendors (shop_name, owner_name, phone, address, city, latitude, longitude, rating_avg)
+        VALUES (
+            'Sri Sai Vedic Pooja Store & Samagri Center',
+            'Ramesh Kumar Sharma',
+            '+91 98490 55443',
+            'Shop #4, Near Temple Arch, Main Road, Hyderabad',
+            'Hyderabad',
+            17.3860,
+            78.4875,
+            4.95
+        ) ON CONFLICT (phone) DO NOTHING;
 
--- Seed Sample Vendor Inventory
-INSERT INTO vendor_inventory (vendor_id, item_name, category, price, stock_quantity, unit)
-SELECT id, 'Pure Cow Ghee (A2 Vedic Bilona)', 'Havan Essentials', 450.0, 50, '500g Jar'
-FROM vendors WHERE phone = '+91 98490 55443'
-AND NOT EXISTS (SELECT 1 FROM vendor_inventory WHERE item_name LIKE 'Pure Cow Ghee%');
+        -- Seed Sample Vendor Inventory
+        INSERT INTO vendor_inventory (vendor_id, item_name, category, price, stock_quantity, unit)
+        SELECT id, 'Pure Cow Ghee (A2 Vedic Bilona)', 'Havan Essentials', 450.0, 50, '500g Jar'
+        FROM vendors WHERE phone = '+91 98490 55443'
+        AND NOT EXISTS (SELECT 1 FROM vendor_inventory WHERE item_name LIKE 'Pure Cow Ghee%');
 
-INSERT INTO vendor_inventory (vendor_id, item_name, category, price, stock_quantity, unit)
-SELECT id, 'Deluxe Havan Samagri Bundle (32 Herbs)', 'Havan Essentials', 350.0, 100, '1kg Pack'
-FROM vendors WHERE phone = '+91 98490 55443'
-AND NOT EXISTS (SELECT 1 FROM vendor_inventory WHERE item_name LIKE 'Deluxe Havan%');
+        INSERT INTO vendor_inventory (vendor_id, item_name, category, price, stock_quantity, unit)
+        SELECT id, 'Deluxe Havan Samagri Bundle (32 Herbs)', 'Havan Essentials', 350.0, 100, '1kg Pack'
+        FROM vendors WHERE phone = '+91 98490 55443'
+        AND NOT EXISTS (SELECT 1 FROM vendor_inventory WHERE item_name LIKE 'Deluxe Havan%');
 
-INSERT INTO vendor_inventory (vendor_id, item_name, category, price, stock_quantity, unit)
-SELECT id, 'Traditional Brass Panchapatra & Udharani', 'Utensils & Brassware', 550.0, 25, '1 Set'
-FROM vendors WHERE phone = '+91 98490 55443'
-AND NOT EXISTS (SELECT 1 FROM vendor_inventory WHERE item_name LIKE 'Traditional Brass%');
+        INSERT INTO vendor_inventory (vendor_id, item_name, category, price, stock_quantity, unit)
+        SELECT id, 'Traditional Brass Panchapatra & Udharani', 'Utensils & Brassware', 550.0, 25, '1 Set'
+        FROM vendors WHERE phone = '+91 98490 55443'
+        AND NOT EXISTS (SELECT 1 FROM vendor_inventory WHERE item_name LIKE 'Traditional Brass%');
+    END IF;
+END $$;

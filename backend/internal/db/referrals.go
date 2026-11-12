@@ -45,10 +45,15 @@ func (s *Storage) ReferPriest(req models.PriestReferralRequest) (string, error) 
 		return "", fmt.Errorf("failed to record referral: %w", err)
 	}
 
-	// 4. Perform instant reassignment on bookings table
-	queryUpdate := `UPDATE bookings SET priest_id = $2 WHERE id = $1`
-	if _, err := tx.Exec(queryUpdate, req.BookingID, req.ReferredPriestID); err != nil {
+	// 4. Perform instant reassignment on bookings table with atomic verification of referring priest assignment
+	queryUpdate := `UPDATE bookings SET priest_id = $2 WHERE id = $1 AND priest_id = $3 AND status NOT IN ('COMPLETED', 'CANCELLED')`
+	res, err := tx.Exec(queryUpdate, req.BookingID, req.ReferredPriestID, req.ReferringPriestID)
+	if err != nil {
 		return "", fmt.Errorf("failed to update booking priest assignment: %w", err)
+	}
+	rowsAffected, _ := res.RowsAffected()
+	if rowsAffected == 0 {
+		return "", fmt.Errorf("reassignment failed: referring priest is not currently assigned or booking is closed")
 	}
 
 	// 5. Transfer blocked schedule slot to referred colleague
@@ -73,7 +78,7 @@ func (s *Storage) ReferPriest(req models.PriestReferralRequest) (string, error) 
 		)
 		_, _ = tx.Exec(`
 			INSERT INTO chat_messages (room_id, sender_id, sender_role, message_type, content)
-			VALUES ($1, 'system', 'SYSTEM', 'SYSTEM_EVENT', $2)
+			VALUES ($1, '00000000-0000-0000-0000-000000000000'::uuid, 'SYSTEM', 'SYSTEM_EVENT', $2)
 		`, roomID, systemMsg)
 	}
 

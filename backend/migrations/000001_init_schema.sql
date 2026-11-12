@@ -96,10 +96,15 @@ INSERT INTO pooja_catalog (title, category, base_price, samagri_kit_price, durat
 SELECT 'Maha Ganapathi Homa / Yagam', 'Obstacle Removal', 3116.0, 1800.0, 90, true, '[{"name":"Havan Samagri","quantity":"2 kg"},{"name":"Dry Coconuts","quantity":"10 units"}]'::jsonb
 WHERE NOT EXISTS (SELECT 1 FROM pooja_catalog WHERE title LIKE 'Maha Ganapathi%');
 
--- Seed Sample Verified Priests with Consent
-INSERT INTO priests (phone, full_name, sampradaya, veda_shakha, experience_years, rating_avg, total_completed_poojas, repeat_booking_count, acceptance_rate, is_online, latitude, longitude, consent_agreed)
-VALUES 
-('+91 98765 43210', 'Brahmasri Venkata Sharma Garu', 'Smartha', 'Rigveda', 18, 4.95, 184, 42, 0.98, true, 17.3850, 78.4867, true),
-('+91 98765 43211', 'Purohit Narayana Acharya', 'Vaishnava', 'Yajurveda', 12, 4.70, 96, 18, 0.85, true, 17.3910, 78.4910, true),
-('+91 98765 43212', 'Vedam Subrahmanya Sastry', 'Smartha', 'Krishna Yajurveda', 22, 4.85, 210, 55, 0.92, true, 17.3780, 78.4750, true)
-ON CONFLICT (phone) DO NOTHING;
+-- Seed Sample Verified Priests with Consent (gated: only populated when purohit.seed_demo is enabled)
+DO $$
+BEGIN
+    IF current_setting('purohit.seed_demo', true) = 'true' THEN
+        INSERT INTO priests (phone, full_name, sampradaya, veda_shakha, experience_years, rating_avg, total_completed_poojas, repeat_booking_count, acceptance_rate, is_online, latitude, longitude, consent_agreed)
+        VALUES 
+        ('+91 98765 43210', 'Brahmasri Venkata Sharma Garu', 'Smartha', 'Rigveda', 18, 4.95, 184, 42, 0.98, true, 17.3850, 78.4867, true),
+        ('+91 98765 43211', 'Purohit Narayana Acharya', 'Vaishnava', 'Yajurveda', 12, 4.70, 96, 18, 0.85, true, 17.3910, 78.4910, true),
+        ('+91 98765 43212', 'Vedam Subrahmanya Sastry', 'Smartha', 'Krishna Yajurveda', 22, 4.85, 210, 55, 0.92, true, 17.3780, 78.4750, true)
+        ON CONFLICT (phone) DO NOTHING;
+    END IF;
+END $$;

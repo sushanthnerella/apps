@@ -1,10 +1,10 @@
 # ==============================================================================
 # PUJA VAAHINI BACKEND GATEWAY DOCKERFILE
-# Multi-stage production container build (Go 1.22+ Alpine -> Minimal Scratch/Alpine)
+# Multi-stage production container build (Go Alpine -> Minimal Alpine Runtime)
 # ==============================================================================
 
 # Build Stage
-FROM golang:1.22-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 WORKDIR /app
 
@@ -15,14 +15,19 @@ RUN go mod download
 
 COPY . .
 
-# Compile optimized static binary
+# Compile optimized static binaries for both API gateway and migration runner
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -ldflags="-w -s" \
-    -o /app/api-gateway \
-    ./cmd/api-gateway/main.go
+    -o /app/bin/api-gateway \
+    ./cmd/api-gateway
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    -ldflags="-w -s" \
+    -o /app/bin/migrate \
+    ./cmd/migrate
 
 # Production Runtime Stage
-FROM alpine:3.19
+FROM alpine:3.20
 
 WORKDIR /app
 
@@ -31,7 +36,14 @@ RUN apk add --no-cache ca-certificates tzdata curl
 # Create non-root system user
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
-COPY --from=builder /app/api-gateway /app/api-gateway
+# Copy compiled binaries and schema migrations into runtime image
+COPY --from=builder /app/bin/api-gateway /app/api-gateway
+COPY --from=builder /app/bin/migrate /app/migrate
+COPY --from=builder /app/migrations /app/migrations
+COPY --from=builder /app/seeds /app/seeds
+
+# Set permissions for non-root runtime
+RUN chown -R appuser:appgroup /app
 
 USER appuser
 
@@ -39,9 +51,11 @@ EXPOSE 8085
 
 ENV PORT=8085 \
     GIN_MODE=release \
-    ENVIRONMENT=production
+    ENVIRONMENT=production \
+    MIGRATIONS_DIR=/app/migrations
 
+# Healthcheck uses dynamic Railway PORT environment variable with fallback to 8085
 HEALTHCHECK --interval=15s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8085/health || exit 1
+    CMD sh -c 'curl -f http://127.0.0.1:${PORT:-8085}/health || exit 1'
 
-ENTRYPOINT ["/app/api-gateway"]
+CMD ["/bin/sh", "-c", "/app/migrate up && exec /app/api-gateway"]

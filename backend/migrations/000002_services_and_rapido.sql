@@ -22,7 +22,12 @@ INSERT INTO pooja_catalog (title, category, base_price, samagri_kit_price, durat
 SELECT 'Navagraha Shanti Homa', 'Astrological Remedies', 3516.0, 1600.0, 100, true, '☀️', 'Pacifies malefic planetary influences and restores dosha balance.'
 WHERE NOT EXISTS (SELECT 1 FROM pooja_catalog WHERE title LIKE 'Navagraha%');
 
--- Update priests with varied locations, services, and ETAs
-UPDATE priests SET eta_minutes = 6, latitude = 17.3850, longitude = 78.4867, services_offered = ARRAY['Gruhapravesam (House Warming)', 'Sri Satyanarayana Swamy Vratam', 'Maha Ganapathi Homa / Yagam', 'Navagraha Shanti Homa'] WHERE phone = '+91 98765 43210';
-UPDATE priests SET eta_minutes = 12, latitude = 17.3910, longitude = 78.4910, services_offered = ARRAY['Sri Satyanarayana Swamy Vratam', 'Namakaranam & Ayushya Homa', 'Maha Ganapathi Homa / Yagam'] WHERE phone = '+91 98765 43211';
-UPDATE priests SET eta_minutes = 15, latitude = 17.3780, longitude = 78.4750, services_offered = ARRAY['Gruhapravesam (House Warming)', 'Mrityunjaya Homa / Shanti', 'Navagraha Shanti Homa'] WHERE phone = '+91 98765 43212';
+-- Update priests with varied locations, services, and ETAs (gated: only executed when purohit.seed_demo is enabled)
+DO $$
+BEGIN
+    IF current_setting('purohit.seed_demo', true) = 'true' THEN
+        UPDATE priests SET eta_minutes = 6, latitude = 17.3850, longitude = 78.4867, services_offered = ARRAY['Gruhapravesam (House Warming)', 'Sri Satyanarayana Swamy Vratam', 'Maha Ganapathi Homa / Yagam', 'Navagraha Shanti Homa'] WHERE phone = '+91 98765 43210';
+        UPDATE priests SET eta_minutes = 12, latitude = 17.3910, longitude = 78.4910, services_offered = ARRAY['Sri Satyanarayana Swamy Vratam', 'Namakaranam & Ayushya Homa', 'Maha Ganapathi Homa / Yagam'] WHERE phone = '+91 98765 43211';
+        UPDATE priests SET eta_minutes = 15, latitude = 17.3780, longitude = 78.4750, services_offered = ARRAY['Gruhapravesam (House Warming)', 'Mrityunjaya Homa / Shanti', 'Navagraha Shanti Homa'] WHERE phone = '+91 98765 43212';
+    END IF;
+END $$;
