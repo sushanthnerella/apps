@@ -1,18 +1,19 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/mux"
 	"github.com/purohit-platform/backend/internal/auth"
 	"github.com/purohit-platform/backend/internal/db"
 	"github.com/purohit-platform/backend/internal/lifecycle"
 	"github.com/purohit-platform/backend/internal/models"
+	"github.com/purohit-platform/backend/internal/notify"
 )
 
 // mapLifecycleErrorToHTTP maps typed lifecycle and storage errors to strict HTTP status codes:
@@ -103,48 +104,34 @@ func requireCallerSession(r *http.Request, storage *db.Storage) (*auth.CustomCla
 	}
 	claims, err := auth.ValidateToken(tokenStr)
 	if err != nil {
-		// Fallback for admin role token verification
-		secret, secErr := auth.GetSecretKey()
-		if secErr == nil {
-			var adminClaims auth.CustomClaims
-			token, parseErr := jwt.ParseWithClaims(tokenStr, &adminClaims, func(t *jwt.Token) (interface{}, error) {
-				if sm, ok := t.Method.(*jwt.SigningMethodHMAC); !ok || sm != jwt.SigningMethodHS256 {
-					return nil, fmt.Errorf("unexpected signing algorithm")
-				}
-				return []byte(secret), nil
-			})
-			if parseErr == nil && token.Valid && adminClaims.Role == "admin" {
-				return &adminClaims, nil
-			}
-		}
 		return nil, fmt.Errorf("invalid token: %w", err)
 	}
-	dbVersion, err := storage.GetUserSessionVersion(claims.UserID, claims.Role)
-	if err != nil {
-		return nil, fmt.Errorf("session lookup failed: %w", err)
-	}
-	if err := auth.ValidateSessionVersion(claims.SessionVersion, dbVersion); err != nil {
-		return nil, fmt.Errorf("session expired or revoked: %w", err)
+	if storage != nil && storage.DB != nil {
+		dbVersion, err := storage.GetUserSessionVersion(claims.UserID, claims.Role)
+		if err != nil {
+			return nil, fmt.Errorf("session lookup failed: %w", err)
+		}
+		if err := auth.ValidateSessionVersion(claims.SessionVersion, dbVersion); err != nil {
+			return nil, fmt.Errorf("session expired or revoked: %w", err)
+		}
 	}
 	return claims, nil
 }
 
 // registerBookingRoutes mounts all protected booking lifecycle routes with strict
 // route-level authorization and asymmetric completion OTP privacy (Task 05).
-func registerBookingRoutes(router *mux.Router, storage *db.Storage) {
-	// 1. Create Booking (POST) - Devotees only
-	router.HandleFunc("/api/v1/bookings", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		claims, err := requireCallerSession(r, storage)
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"unauthorized","message":"%v"}`, err), http.StatusUnauthorized)
-			return
-		}
+func registerBookingRoutes(router *mux.Router, storage *db.Storage, notifiers ...notify.PushNotifier) {
+	var pushService notify.PushNotifier
+	if len(notifiers) > 0 && notifiers[0] != nil {
+		pushService = notifiers[0]
+	} else {
+		pushService = notify.NewPushNotifierFromEnv()
+	}
 
-		if claims.Role != "devotee" && claims.Role != "user" {
-			http.Error(w, `{"error":"forbidden","message":"only devotees can create bookings"}`, http.StatusForbidden)
-			return
-		}
+	// 1. Create Booking (POST) - Devotees only, Idempotent
+	router.HandleFunc("/api/v1/bookings", requireRole(storage, "devotee", "user")(requireIdempotency(storage)(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		claims := getCallerClaims(r)
 
 		var req models.BookingCreateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -153,11 +140,13 @@ func registerBookingRoutes(router *mux.Router, storage *db.Storage) {
 		}
 
 		// Enforce server ownership: never trust client-supplied user_id as proof of ownership
-		if req.UserID != "" && req.UserID != claims.UserID {
+		if req.UserID != "" && claims != nil && req.UserID != claims.UserID {
 			http.Error(w, `{"error":"forbidden","message":"cannot create booking on behalf of another user"}`, http.StatusForbidden)
 			return
 		}
-		req.UserID = claims.UserID
+		if claims != nil {
+			req.UserID = claims.UserID
+		}
 
 		bookingID, otp, err := storage.CreateBooking(req)
 		if err != nil {
@@ -165,16 +154,28 @@ func registerBookingRoutes(router *mux.Router, storage *db.Storage) {
 			return
 		}
 
+		if req.PriestID != "" {
+			go func(priestID, bID string) {
+				tokens, _ := storage.GetDeviceTokensForUser(context.Background(), priestID)
+				_ = pushService.SendToTokens(context.Background(), tokens, notify.NotificationMessage{
+					Title: "New Pooja Request",
+					Body:  "You have received a new ritual booking request.",
+					Data:  map[string]string{"booking_id": bID, "type": "NEW_BOOKING"},
+				})
+			}(req.PriestID, bookingID)
+		}
+
 		// Initial creation response is returned exclusively to the creating devotee
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"booking_id":     bookingID,
-			"status":         "REQUESTED",
-			"escrow_status":  "HELD_IN_ESCROW",
-			"completion_otp": otp,
-			"total_amount":   req.TotalAmount,
-			"message":        "Booking initialized successfully.",
+			"booking_id":         bookingID,
+			"status":             "REQUESTED",
+			"escrow_status":      "HELD_IN_ESCROW",
+			"completion_otp":     otp,
+			"total_amount_minor": req.TotalAmountMinor,
+			"total_amount":       req.TotalAmount,
+			"message":            "Booking initialized successfully.",
 		})
-	}).Methods("POST")
+	}))).Methods("POST")
 
 	// 2. Query Bookings List (GET) - Scoped strictly to caller's identity
 	router.HandleFunc("/api/v1/bookings", func(w http.ResponseWriter, r *http.Request) {
@@ -337,7 +338,7 @@ func registerBookingRoutes(router *mux.Router, storage *db.Storage) {
 	}).Methods("GET", "OPTIONS")
 
 	// 6. Update Status (POST) - Strict role & ownership checks; OTP verified on COMPLETED
-	router.HandleFunc("/api/v1/bookings/status", func(w http.ResponseWriter, r *http.Request) {
+	router.HandleFunc("/api/v1/bookings/status", optionalIdempotency(storage)(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		claims, err := requireCallerSession(r, storage)
 		if err != nil {
@@ -396,13 +397,33 @@ func registerBookingRoutes(router *mux.Router, storage *db.Storage) {
 			return
 		}
 
+		if req.Status == "ACCEPTED" {
+			go func(devoteeID, bID string) {
+				tokens, _ := storage.GetDeviceTokensForUser(context.Background(), devoteeID)
+				_ = pushService.SendToTokens(context.Background(), tokens, notify.NotificationMessage{
+					Title: "Booking Accepted",
+					Body:  "Your purohit has accepted the booking.",
+					Data:  map[string]string{"booking_id": bID, "status": "ACCEPTED"},
+				})
+			}(ownerUID, req.BookingID)
+		} else if req.Status == "REJECTED" {
+			go func(devoteeID, bID string) {
+				tokens, _ := storage.GetDeviceTokensForUser(context.Background(), devoteeID)
+				_ = pushService.SendToTokens(context.Background(), tokens, notify.NotificationMessage{
+					Title: "Booking Declined",
+					Body:  "The purohit was unable to accept this booking.",
+					Data:  map[string]string{"booking_id": bID, "status": "REJECTED"},
+				})
+			}(ownerUID, req.BookingID)
+		}
+
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"booking_id":    req.BookingID,
 			"new_status":    req.Status,
 			"escrow_status": escrowResult,
 			"message":       "Booking status updated successfully",
 		})
-	}).Methods("POST", "OPTIONS")
+	})).Methods("POST", "OPTIONS")
 
 	// 7. Dedicated Booking Completion Endpoint (POST) - Assigned priest with valid OTP
 	router.HandleFunc("/api/v1/bookings/{id}/complete", func(w http.ResponseWriter, r *http.Request) {
@@ -551,17 +572,23 @@ func registerBookingRoutes(router *mux.Router, storage *db.Storage) {
 		json.NewEncoder(w).Encode(quote)
 	}).Methods("GET", "OPTIONS")
 
-	router.HandleFunc("/api/v1/bookings/cancel", func(w http.ResponseWriter, r *http.Request) {
+	handleCancel := requireRole(storage, "devotee", "user", "priest", "admin")(requireIdempotency(storage)(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		claims, err := requireCallerSession(r, storage)
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"unauthorized","message":"%v"}`, err), http.StatusUnauthorized)
+		claims := getCallerClaims(r)
+
+		var req models.CancelBookingRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
+			http.Error(w, `{"error":"invalid cancellation request"}`, http.StatusBadRequest)
 			return
 		}
 
-		var req models.CancelBookingRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, `{"error":"invalid cancellation request"}`, http.StatusBadRequest)
+		vars := mux.Vars(r)
+		if pathID := vars["id"]; pathID != "" && req.BookingID == "" {
+			req.BookingID = pathID
+		}
+
+		if req.BookingID == "" {
+			http.Error(w, `{"error":"bad_request","message":"booking_id is required"}`, http.StatusBadRequest)
 			return
 		}
 
@@ -587,15 +614,40 @@ func registerBookingRoutes(router *mux.Router, storage *db.Storage) {
 			mapLifecycleErrorToHTTP(w, err)
 			return
 		}
+
+		go func(devoteeID, priestID, bID string) {
+			if devoteeID != "" {
+				tokens, _ := storage.GetDeviceTokensForUser(context.Background(), devoteeID)
+				_ = pushService.SendToTokens(context.Background(), tokens, notify.NotificationMessage{
+					Title: "Booking Cancelled",
+					Body:  "Your ritual booking has been cancelled.",
+					Data:  map[string]string{"booking_id": bID, "type": "BOOKING_CANCELLED"},
+				})
+			}
+			if priestID != "" {
+				tokens, _ := storage.GetDeviceTokensForUser(context.Background(), priestID)
+				_ = pushService.SendToTokens(context.Background(), tokens, notify.NotificationMessage{
+					Title: "Booking Cancelled",
+					Body:  "A booking assigned to you has been cancelled.",
+					Data:  map[string]string{"booking_id": bID, "type": "BOOKING_CANCELLED"},
+				})
+			}
+		}(ownerUID, assignedPID, req.BookingID)
+
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":              "CANCELLED",
-			"booking_id":          req.BookingID,
-			"refund_amount":       quote.RefundAmount,
-			"priest_compensation": quote.PriestCompensation,
-			"policy_notice":       quote.PolicyNotice,
-			"message":             "Booking cancelled successfully per pilot policy",
+			"status":                   "CANCELLED",
+			"booking_id":               req.BookingID,
+			"refund_amount_minor":       quote.RefundAmountMinor,
+			"priest_compensation_minor": quote.PriestCompensationMinor,
+			"refund_amount":            quote.RefundAmount,
+			"priest_compensation":      quote.PriestCompensation,
+			"policy_notice":            quote.PolicyNotice,
+			"message":                  "Booking cancelled successfully per pilot policy",
 		})
-	}).Methods("POST", "OPTIONS")
+	}))
+
+	router.HandleFunc("/api/v1/bookings/cancel", handleCancel).Methods("POST", "OPTIONS")
+	router.HandleFunc("/api/v1/bookings/{id}/cancel", handleCancel).Methods("POST", "OPTIONS")
 
 	// 9B. Admin Emergency Force Cancellation (POST) - Admin role required with non-empty reason
 	router.HandleFunc("/api/v1/bookings/{id}/admin-cancel", func(w http.ResponseWriter, r *http.Request) {

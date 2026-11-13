@@ -170,6 +170,7 @@ func TestRoleEnforcementAcrossEndpoints(t *testing.T) {
 	t.Run("Priest cannot create booking", func(t *testing.T) {
 		createPayload := `{"total_amount":1500.0}`
 		req := httptest.NewRequest("POST", "/api/v1/bookings", bytes.NewBufferString(createPayload))
+		req.Header.Set("Idempotency-Key", newIdemKey())
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+priestToken)
 		w := httptest.NewRecorder()
@@ -178,8 +179,8 @@ func TestRoleEnforcementAcrossEndpoints(t *testing.T) {
 		if w.Code != http.StatusForbidden {
 			t.Fatalf("expected 403 Forbidden, got %d: %s", w.Code, w.Body.String())
 		}
-		if !strings.Contains(w.Body.String(), "only devotees can create bookings") {
-			t.Fatalf("expected 'only devotees can create bookings', got: %s", w.Body.String())
+		if !strings.Contains(w.Body.String(), "insufficient permissions for role: priest") {
+			t.Fatalf("expected 'insufficient permissions for role: priest', got: %s", w.Body.String())
 		}
 	})
 
@@ -581,6 +582,7 @@ func TestLegitimateBookingLifecycleAndCompletion(t *testing.T) {
 		"devotee_nakshatram": "Pushya"
 	}`, priestID)
 	reqCreate := httptest.NewRequest("POST", "/api/v1/bookings", bytes.NewBufferString(createPayload))
+	reqCreate.Header.Set("Idempotency-Key", newIdemKey())
 	reqCreate.Header.Set("Content-Type", "application/json")
 	reqCreate.Header.Set("Authorization", "Bearer "+devoteeToken)
 	wCreate := httptest.NewRecorder()
@@ -1356,6 +1358,7 @@ func TestFreePilotNoEscrowOrMoneyClaim(t *testing.T) {
 	}`, devoteeID, priestID, poojaID)
 
 	reqCreate := httptest.NewRequest("POST", "/api/v1/bookings", bytes.NewBufferString(createPayload))
+	reqCreate.Header.Set("Idempotency-Key", newIdemKey())
 	reqCreate.Header.Set("Content-Type", "application/json")
 	reqCreate.Header.Set("Authorization", "Bearer "+dToken)
 	wCreate := httptest.NewRecorder()

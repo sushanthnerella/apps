@@ -39,3 +39,8 @@ backend/vendor/
 *.dylib
 *.test
 *.out
+
+# Backend local secrets
+/backend/.env
+/backend/.env.*
+!/backend/.env.example

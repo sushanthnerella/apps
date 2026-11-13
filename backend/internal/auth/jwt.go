@@ -103,8 +103,8 @@ func GenerateToken(userID, phone, role, fullName string, sessionVersion int) (st
 	if userID == "" {
 		return "", fmt.Errorf("user_id claim is required")
 	}
-	if role != "devotee" && role != "priest" {
-		return "", fmt.Errorf("invalid role claim %q: must be 'devotee' or 'priest'", role)
+	if role != "devotee" && role != "priest" && role != "admin" {
+		return "", fmt.Errorf("invalid role claim %q: must be 'devotee', 'priest', or 'admin'", role)
 	}
 	if sessionVersion <= 0 {
 		sessionVersion = 1
@@ -170,10 +170,10 @@ func ValidateToken(tokenString string) (*CustomClaims, error) {
 	if strings.TrimSpace(claims.UserID) == "" {
 		return nil, fmt.Errorf("%w: user_id claim is required", ErrInvalidClaims)
 	}
-	if strings.TrimSpace(claims.Phone) == "" {
+	if claims.Role != "admin" && strings.TrimSpace(claims.Phone) == "" {
 		return nil, fmt.Errorf("%w: phone claim is required", ErrInvalidClaims)
 	}
-	if claims.Role != "devotee" && claims.Role != "priest" {
+	if claims.Role != "devotee" && claims.Role != "priest" && claims.Role != "admin" {
 		return nil, fmt.Errorf("%w: invalid role claim %q", ErrInvalidClaims, claims.Role)
 	}
 

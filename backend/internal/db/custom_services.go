@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/purohit-platform/backend/internal/models"
@@ -182,18 +183,33 @@ func (s *Storage) CreatePriestCustomService(req models.CreateCustomServiceReques
 		s.DB.QueryRow(`SELECT id::text FROM priests LIMIT 1`).Scan(&req.PriestID)
 	}
 
+	if req.DakshinaFeeMinor == 0 && req.DakshinaFee > 0 {
+		req.DakshinaFeeMinor = int64(math.Round(req.DakshinaFee * 100))
+	}
+	if req.DakshinaFeeMinor > 0 && req.DakshinaFee == 0 {
+		req.DakshinaFee = float64(req.DakshinaFeeMinor) / 100.0
+	}
+	if req.SamagriKitPriceMinor == 0 && req.SamagriKitPrice > 0 {
+		req.SamagriKitPriceMinor = int64(math.Round(req.SamagriKitPrice * 100))
+	}
+	if req.SamagriKitPriceMinor > 0 && req.SamagriKitPrice == 0 {
+		req.SamagriKitPrice = float64(req.SamagriKitPriceMinor) / 100.0
+	}
+
 	query := `
 		INSERT INTO priest_custom_services (
-			priest_id, title, title_en, title_te, title_hi, category, dakshina_fee, samagri_kit_price, 
+			priest_id, title, title_en, title_te, title_hi, category, 
+			dakshina_fee, dakshina_fee_minor, samagri_kit_price, samagri_kit_price_minor, 
 			duration_minutes, is_online_eligible, samagri_checklist, description, description_en, description_te, description_hi
 		) 
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) 
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) 
 		RETURNING id
 	`
 	var id string
 	err = s.DB.QueryRow(
-		query, req.PriestID, req.Title, titleEn, titleTe, titleHi, req.Category, req.DakshinaFee,
-		req.SamagriKitPrice, req.DurationMinutes, req.IsOnlineEligible,
+		query, req.PriestID, req.Title, titleEn, titleTe, titleHi, req.Category, 
+		req.DakshinaFee, req.DakshinaFeeMinor, req.SamagriKitPrice, req.SamagriKitPriceMinor, 
+		req.DurationMinutes, req.IsOnlineEligible,
 		checklistJSON, req.Description, descEn, descTe, descHi,
 	).Scan(&id)
 
@@ -212,7 +228,7 @@ func (s *Storage) GetAllServiceTranslations() ([]models.ServiceTranslationItem, 
 		SELECT id, title, 
 		       COALESCE(title_en, title), COALESCE(title_te, title), COALESCE(title_hi, title),
 		       COALESCE(description_en, description), COALESCE(description_te, description), COALESCE(description_hi, description),
-		       category, base_price
+		       category, base_price, COALESCE(base_price_minor, ROUND(base_price * 100))
 		FROM pooja_catalog
 		ORDER BY base_price ASC
 	`
@@ -223,11 +239,12 @@ func (s *Storage) GetAllServiceTranslations() ([]models.ServiceTranslationItem, 
 			var item models.ServiceTranslationItem
 			item.Type = "CATALOG"
 			item.PriestName = "Temple Central Catalog"
+			item.Currency = "INR"
 			if err := catRows.Scan(
 				&item.ID, &item.OriginalTitle,
 				&item.TitleEn, &item.TitleTe, &item.TitleHi,
 				&item.DescriptionEn, &item.DescriptionTe, &item.DescriptionHi,
-				&item.Category, &item.BasePrice,
+				&item.Category, &item.BasePrice, &item.BasePriceMinor,
 			); err == nil {
 				results = append(results, item)
 			}
@@ -239,7 +256,7 @@ func (s *Storage) GetAllServiceTranslations() ([]models.ServiceTranslationItem, 
 		SELECT cs.id, COALESCE(cs.priest_id::text, ''), COALESCE(p.full_name, 'Purohit'), cs.title,
 		       COALESCE(cs.title_en, cs.title), COALESCE(cs.title_te, cs.title), COALESCE(cs.title_hi, cs.title),
 		       COALESCE(cs.description_en, cs.description), COALESCE(cs.description_te, cs.description), COALESCE(cs.description_hi, cs.description),
-		       cs.category, cs.dakshina_fee
+		       cs.category, cs.dakshina_fee, COALESCE(cs.dakshina_fee_minor, ROUND(cs.dakshina_fee * 100))
 		FROM priest_custom_services cs
 		LEFT JOIN priests p ON cs.priest_id = p.id
 		WHERE cs.is_active = TRUE
@@ -251,11 +268,12 @@ func (s *Storage) GetAllServiceTranslations() ([]models.ServiceTranslationItem, 
 		for customRows.Next() {
 			var item models.ServiceTranslationItem
 			item.Type = "PRIEST_CUSTOM"
+			item.Currency = "INR"
 			if err := customRows.Scan(
 				&item.ID, &item.PriestID, &item.PriestName, &item.OriginalTitle,
 				&item.TitleEn, &item.TitleTe, &item.TitleHi,
 				&item.DescriptionEn, &item.DescriptionTe, &item.DescriptionHi,
-				&item.Category, &item.BasePrice,
+				&item.Category, &item.BasePrice, &item.BasePriceMinor,
 			); err == nil {
 				results = append(results, item)
 			}

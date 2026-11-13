@@ -235,3 +235,78 @@ func TestSessionRevocation(t *testing.T) {
 		t.Errorf("expected zero DB session version to be rejected")
 	}
 }
+
+func TestAdminTokenValidationSecurity(t *testing.T) {
+	SetJWTSecretForTesting(testSecret)
+	adminID := "c1111111-2f3b-485a-8b1a-b6058e469599"
+
+	// 1. Valid admin token
+	validToken, err := GenerateToken(adminID, "+919999900000", "admin", "Admin User", 1)
+	if err != nil {
+		t.Fatalf("failed to generate admin token: %v", err)
+	}
+	claims, err := ValidateToken(validToken)
+	if err != nil {
+		t.Fatalf("expected valid admin token, got: %v", err)
+	}
+	if claims.Role != "admin" || claims.UserID != adminID || claims.SessionVersion != 1 {
+		t.Errorf("unexpected claims in admin token: %+v", claims)
+	}
+
+	// 2. Expired admin token
+	expiredClaims := CustomClaims{
+		UserID:         adminID,
+		Phone:          "+919999900000",
+		Role:           "admin",
+		SessionVersion: 1,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(-10 * time.Minute)),
+			IssuedAt:  jwt.NewNumericDate(time.Now().Add(-1 * time.Hour)),
+			Issuer:    ExpectedJWTIssuer,
+			Subject:   adminID,
+		},
+	}
+	expiredToken := jwt.NewWithClaims(jwt.SigningMethodHS256, expiredClaims)
+	expiredStr, _ := expiredToken.SignedString([]byte(testSecret))
+	if _, err := ValidateToken(expiredStr); err == nil {
+		t.Errorf("expired admin token was unexpectedly accepted")
+	}
+
+	// 3. Admin token with no exp
+	noExpClaims := CustomClaims{
+		UserID:         adminID,
+		Phone:          "+919999900000",
+		Role:           "admin",
+		SessionVersion: 1,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:  ExpectedJWTIssuer,
+			Subject: adminID,
+		},
+	}
+	noExpToken := jwt.NewWithClaims(jwt.SigningMethodHS256, noExpClaims)
+	noExpStr, _ := noExpToken.SignedString([]byte(testSecret))
+	if _, err := ValidateToken(noExpStr); err == nil {
+		t.Errorf("admin token without exp was unexpectedly accepted")
+	}
+
+	// 4. Admin token after session_version bump (revocation check)
+	if err := ValidateSessionVersion(claims.SessionVersion, 2); err != ErrSessionRevoked {
+		t.Errorf("expected ErrSessionRevoked after session_version bump to 2, got: %v", err)
+	}
+
+	// 5. Forged admin token signed with random secret
+	forgedToken := jwt.NewWithClaims(jwt.SigningMethodHS256, CustomClaims{
+		UserID:         adminID,
+		Role:           "admin",
+		SessionVersion: 1,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
+			Issuer:    ExpectedJWTIssuer,
+			Subject:   adminID,
+		},
+	})
+	forgedStr, _ := forgedToken.SignedString([]byte("some_random_unauthorized_key_12345678"))
+	if _, err := ValidateToken(forgedStr); err == nil {
+		t.Errorf("forged admin token was unexpectedly accepted")
+	}
+}

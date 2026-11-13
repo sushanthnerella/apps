@@ -11,6 +11,7 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
+	"github.com/purohit-platform/backend/internal/db"
 	"github.com/purohit-platform/backend/internal/db/migrate"
 )
 
@@ -62,6 +63,8 @@ func main() {
 		seedDemo     bool
 		targetVer    string
 		seedFile     string
+		adminEmail   string
+		adminPass    string
 	)
 
 	flag.StringVar(&pgConnStr, "db", "", "PostgreSQL connection string")
@@ -70,6 +73,8 @@ func main() {
 	flag.BoolVar(&seedDemo, "seed-demo", false, "Include demo seeds in fresh migration run (dev only)")
 	flag.StringVar(&targetVer, "version", "000003", "Target version for baseline command")
 	flag.StringVar(&seedFile, "file", "", "Explicit seed SQL file to execute")
+	flag.StringVar(&adminEmail, "email", "", "Admin email for create-admin")
+	flag.StringVar(&adminPass, "password", "", "Admin password for create-admin")
 	flag.Parse()
 
 	args := flag.Args()
@@ -85,26 +90,26 @@ func main() {
 		pgConnStr = os.Getenv("DATABASE_URL")
 	}
 	if pgConnStr == "" {
-		pgConnStr = "postgres://postgres:123456@localhost:5432/purohit_db?sslmode=disable"
+		log.Fatal("PG_CONN_STR or DATABASE_URL is required")
 	}
 
 	dir := findMigrationsDir(migrationDir)
 	sDir := findSeedsDir(seedsDir)
 
-	db, err := sql.Open("postgres", pgConnStr)
+	sqlDB, err := sql.Open("postgres", pgConnStr)
 	if err != nil {
 		log.Fatalf("❌ Database connection error: %v", err)
 	}
-	defer db.Close()
+	defer sqlDB.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	if err := db.PingContext(ctx); err != nil {
+	if err := sqlDB.PingContext(ctx); err != nil {
 		log.Fatalf("❌ Database ping failed: %v", err)
 	}
 
-	migrator := migrate.New(db, dir, sDir)
+	migrator := migrate.New(sqlDB, dir, sDir)
 
 	switch command {
 	case "up":
@@ -151,8 +156,19 @@ func main() {
 		}
 		fmt.Printf("✅ Schema is ready at or above version %s.\n", expectedMin)
 
+	case "create-admin":
+		if adminEmail == "" || adminPass == "" {
+			log.Fatalf("❌ Usage: migrate -email <admin@domain> -password <secret> create-admin")
+		}
+		storage := &db.Storage{DB: sqlDB}
+		admin, err := storage.CreateAdminUser(adminEmail, adminPass)
+		if err != nil {
+			log.Fatalf("❌ Failed to create admin user: %v", err)
+		}
+		fmt.Printf("✅ Admin user created successfully:\n  ID: %s\n  Email: %s\n  Role: %s\n", admin.ID, admin.Email, admin.Role)
+
 	default:
-		fmt.Printf("Usage: migrate [up|status|baseline|seed|check] [flags]\n")
+		fmt.Printf("Usage: migrate [up|status|baseline|seed|check|create-admin] [flags]\n")
 		os.Exit(1)
 	}
 }

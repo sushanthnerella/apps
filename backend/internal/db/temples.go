@@ -2,8 +2,11 @@ package db
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/purohit-platform/backend/internal/models"
@@ -75,13 +78,20 @@ func (s *Storage) BookTempleTicket(req models.BookTempleTicketRequest) (*models.
 	_, _ = rand.Read(tokenBytes)
 	qrToken := fmt.Sprintf("PV-TEMPLE-%s-%s", req.VisitDate, hex.EncodeToString(tokenBytes))
 
+	if req.AmountPaidMinor == 0 && req.AmountPaid > 0 {
+		req.AmountPaidMinor = int64(math.Round(req.AmountPaid * 100))
+	}
+	if req.AmountPaidMinor > 0 && req.AmountPaid == 0 {
+		req.AmountPaid = float64(req.AmountPaidMinor) / 100.0
+	}
+
 	query := `
 		INSERT INTO temple_vip_tickets (
 			temple_id, vip_puja_id, user_id, devotee_name, devotee_gotram, 
 			devotee_nakshatram, devotee_phone, visit_date, slot_time, 
-			ticket_type, qr_token, status, amount_paid, payment_mode
+			ticket_type, qr_token, status, amount_paid, amount_paid_minor, payment_mode
 		) 
-		VALUES ($1, $2, NULLIF($3, '')::uuid, $4, $5, $6, $7, $8, $9, $10, $11, 'CONFIRMED', $12, $13) 
+		VALUES ($1, $2, NULLIF($3, '')::uuid, $4, $5, $6, $7, $8, $9, $10, $11, 'CONFIRMED', $12, $13, $14) 
 		RETURNING id, created_at
 	`
 	ticket := models.TempleVipTicket{
@@ -97,7 +107,9 @@ func (s *Storage) BookTempleTicket(req models.BookTempleTicketRequest) (*models.
 		TicketType:        req.TicketType,
 		QRToken:           qrToken,
 		Status:            "CONFIRMED",
+		AmountPaidMinor:   req.AmountPaidMinor,
 		AmountPaid:        req.AmountPaid,
+		Currency:          "INR",
 		PaymentMode:       req.PaymentMode,
 	}
 
@@ -105,7 +117,7 @@ func (s *Storage) BookTempleTicket(req models.BookTempleTicketRequest) (*models.
 		query, req.TempleID, req.VipPujaID, req.UserID, req.DevoteeName,
 		req.DevoteeGotram, req.DevoteeNakshatram, req.DevoteePhone,
 		req.VisitDate, req.SlotTime, req.TicketType, qrToken,
-		req.AmountPaid, req.PaymentMode,
+		req.AmountPaid, req.AmountPaidMinor, req.PaymentMode,
 	).Scan(&ticket.ID, &ticket.CreatedAt)
 
 	if err != nil {
@@ -114,44 +126,49 @@ func (s *Storage) BookTempleTicket(req models.BookTempleTicketRequest) (*models.
 	return &ticket, nil
 }
 
-// VerifyTempleTicket handles fast gate verification and updates ticket status to CHECKED_IN
+// VerifyTempleTicket handles fast atomic gate verification and updates ticket status to CHECKED_IN
 func (s *Storage) VerifyTempleTicket(qrToken string) (*models.TempleVipTicket, error) {
 	var ticket models.TempleVipTicket
 	var checkInTS *time.Time
 	var visitDate time.Time
 
-	query := `
-		SELECT id, temple_id, vip_puja_id, COALESCE(user_id::text, ''), devotee_name, 
+	atomicQuery := `
+		UPDATE temple_vip_tickets 
+		SET status = 'CHECKED_IN', check_in_timestamp = now()
+		WHERE qr_token = $1 AND status <> 'CHECKED_IN'
+		RETURNING id, temple_id, vip_puja_id, COALESCE(user_id::text, ''), devotee_name, 
 		       COALESCE(devotee_gotram, ''), COALESCE(devotee_nakshatram, ''), devotee_phone, 
-		       visit_date, slot_time, ticket_type, qr_token, status, amount_paid, 
-		       payment_mode, check_in_timestamp, created_at 
-		FROM temple_vip_tickets 
-		WHERE qr_token = $1
+		       visit_date, slot_time, ticket_type, qr_token, status, 
+		       COALESCE(amount_paid_minor, ROUND(amount_paid * 100)), amount_paid, 
+		       payment_mode, check_in_timestamp, created_at
 	`
-	err := s.DB.QueryRow(query, qrToken).Scan(
+	err := s.DB.QueryRow(atomicQuery, qrToken).Scan(
 		&ticket.ID, &ticket.TempleID, &ticket.VipPujaID, &ticket.UserID, &ticket.DevoteeName,
 		&ticket.DevoteeGotram, &ticket.DevoteeNakshatram, &ticket.DevoteePhone,
 		&visitDate, &ticket.SlotTime, &ticket.TicketType, &ticket.QRToken,
-		&ticket.Status, &ticket.AmountPaid, &ticket.PaymentMode, &checkInTS, &ticket.CreatedAt,
+		&ticket.Status, &ticket.AmountPaidMinor, &ticket.AmountPaid,
+		&ticket.PaymentMode, &checkInTS, &ticket.CreatedAt,
 	)
-	if err != nil {
-		return nil, fmt.Errorf("ticket not found or invalid QR token: %w", err)
-	}
-	ticket.VisitDate = visitDate.Format("2006-01-02")
-	ticket.CheckInTimestamp = checkInTS
-
-	if ticket.Status == "CHECKED_IN" {
-		return &ticket, fmt.Errorf("ticket was ALREADY CHECKED IN at %v", checkInTS)
+	if err == nil {
+		ticket.VisitDate = visitDate.Format("2006-01-02")
+		ticket.CheckInTimestamp = checkInTS
+		ticket.Currency = "INR"
+		return &ticket, nil
 	}
 
-	// Mark checked in
-	now := time.Now()
-	_, err = s.DB.Exec(`UPDATE temple_vip_tickets SET status = 'CHECKED_IN', check_in_timestamp = $2 WHERE id = $1`, ticket.ID, now)
-	if err != nil {
-		return nil, fmt.Errorf("failed to record ticket check-in: %w", err)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Zero rows updated. Look up the row once to return "already checked in" or "not found".
+		var existingStatus string
+		var existingTS *time.Time
+		lookupErr := s.DB.QueryRow(`SELECT status, check_in_timestamp FROM temple_vip_tickets WHERE qr_token = $1`, qrToken).Scan(&existingStatus, &existingTS)
+		if lookupErr == nil {
+			if existingStatus == "CHECKED_IN" {
+				return nil, fmt.Errorf("ticket was ALREADY CHECKED IN at %v", existingTS)
+			}
+			return nil, fmt.Errorf("ticket cannot be checked in with status '%s'", existingStatus)
+		}
+		return nil, fmt.Errorf("ticket not found or invalid QR token")
 	}
-	ticket.Status = "CHECKED_IN"
-	ticket.CheckInTimestamp = &now
 
-	return &ticket, nil
+	return nil, fmt.Errorf("failed to verify ticket: %w", err)
 }

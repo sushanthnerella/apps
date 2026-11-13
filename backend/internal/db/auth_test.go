@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -27,7 +28,7 @@ func getAuthTestRootConnStr() string {
 	if connStr != "" {
 		return connStr
 	}
-	return "postgres://postgres:123456@localhost:5432/postgres?sslmode=disable"
+	return ""
 }
 
 func getAuthMigrationsDir(t *testing.T) string {
@@ -53,6 +54,9 @@ func createIsolatedAuthTestDB(t *testing.T) (*Storage, *sql.DB, string) {
 	auth.SetJWTSecretForTesting("purohit_platform_test_jwt_secret_key_32bytes_long!")
 
 	rootConnStr := getAuthTestRootConnStr()
+	if rootConnStr == "" {
+		t.Skip("Explicit PostgreSQL test connection is required")
+	}
 	rootDB, err := sql.Open("postgres", rootConnStr)
 	if err != nil {
 		t.Skipf("Skipping test: cannot connect to root postgres (%v)", err)
@@ -75,7 +79,12 @@ func createIsolatedAuthTestDB(t *testing.T) (*Storage, *sql.DB, string) {
 		t.Fatalf("failed to create isolated test database %s: %v", testDBName, err)
 	}
 
-	testConnStr := fmt.Sprintf("postgres://postgres:123456@localhost:5432/%s?sslmode=disable", testDBName)
+	testURL, err := url.Parse(rootConnStr)
+	if err != nil || testURL.Host == "" {
+		t.Fatal("test connection must be a PostgreSQL URL")
+	}
+	testURL.Path = "/" + testDBName
+	testConnStr := testURL.String()
 	testDB, err := sql.Open("postgres", testConnStr)
 	if err != nil {
 		rootDB.Exec(fmt.Sprintf(`DROP DATABASE IF EXISTS "%s"`, testDBName))
@@ -375,11 +384,11 @@ func TestPhoneFormatVariantsAndCollisions(t *testing.T) {
 
 	// Role Collision: Cannot register same phone number as priest
 	_, err = storage.RegisterPriest(models.PriestRegistrationRequest{
-		FullName:        "Conflicting Priest",
-		Phone:           "+919849044444",
-		Password:        "PriestPassword@2026",
-		Sampradaya:      "Smartha",
-		ConsentAgreed:   true,
+		FullName:      "Conflicting Priest",
+		Phone:         "+919849044444",
+		Password:      "PriestPassword@2026",
+		Sampradaya:    "Smartha",
+		ConsentAgreed: true,
 	})
 	if err == nil {
 		t.Errorf("expected priest registration with existing devotee phone to be rejected, but succeeded")

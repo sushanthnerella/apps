@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -21,7 +22,10 @@ func CreateIsolatedAuthTestDBForTest(t *testing.T) (*Storage, *sql.DB, string) {
 
 	rootConnStr := os.Getenv("TEST_PG_ROOT_CONN_STR")
 	if rootConnStr == "" {
-		rootConnStr = "postgres://postgres:123456@localhost:5432/postgres?sslmode=disable"
+		t.Skip("TEST_PG_ROOT_CONN_STR is required for isolated database tests")
+	}
+	if rootConnStr == "" {
+		t.Skip("Explicit PostgreSQL test connection is required")
 	}
 	rootDB, err := sql.Open("postgres", rootConnStr)
 	if err != nil {
@@ -45,7 +49,12 @@ func CreateIsolatedAuthTestDBForTest(t *testing.T) (*Storage, *sql.DB, string) {
 		t.Fatalf("failed to create isolated test database %s: %v", testDBName, err)
 	}
 
-	testConnStr := fmt.Sprintf("postgres://postgres:123456@localhost:5432/%s?sslmode=disable", testDBName)
+	testURL, err := url.Parse(rootConnStr)
+	if err != nil || testURL.Host == "" {
+		t.Fatal("test connection must be a PostgreSQL URL")
+	}
+	testURL.Path = "/" + testDBName
+	testConnStr := testURL.String()
 	testDB, err := sql.Open("postgres", testConnStr)
 	if err != nil {
 		_, _ = rootDB.Exec(fmt.Sprintf(`DROP DATABASE IF EXISTS "%s"`, testDBName))

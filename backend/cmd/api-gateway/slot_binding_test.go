@@ -57,6 +57,7 @@ func TestHTTPAtomicSlotBindingAtCreation(t *testing.T) {
 	}
 	body1, _ := json.Marshal(createReq1)
 	req1 := httptest.NewRequest("POST", "/api/v1/bookings", bytes.NewBuffer(body1))
+	req1.Header.Set("Idempotency-Key", newIdemKey())
 	req1.Header.Set("Content-Type", "application/json")
 	req1.Header.Set("Authorization", "Bearer "+devToken1)
 	w1 := httptest.NewRecorder()
@@ -92,6 +93,7 @@ func TestHTTPAtomicSlotBindingAtCreation(t *testing.T) {
 	}
 	body2, _ := json.Marshal(createReq2)
 	req2 := httptest.NewRequest("POST", "/api/v1/bookings", bytes.NewBuffer(body2))
+	req2.Header.Set("Idempotency-Key", newIdemKey())
 	req2.Header.Set("Content-Type", "application/json")
 	req2.Header.Set("Authorization", "Bearer "+devToken2)
 	w2 := httptest.NewRecorder()
@@ -105,6 +107,7 @@ func TestHTTPAtomicSlotBindingAtCreation(t *testing.T) {
 	// Cancelling booking 1 must atomically release the slot
 	cancelPayload := fmt.Sprintf(`{"booking_id":"%s","reason_code":"CHANGE_PLANS"}`, bID1)
 	reqCancel := httptest.NewRequest("POST", "/api/v1/bookings/cancel", bytes.NewBufferString(cancelPayload))
+	reqCancel.Header.Set("Idempotency-Key", newIdemKey())
 	reqCancel.Header.Set("Content-Type", "application/json")
 	reqCancel.Header.Set("Authorization", "Bearer "+devToken1)
 	wCancel := httptest.NewRecorder()
@@ -126,6 +129,7 @@ func TestHTTPAtomicSlotBindingAtCreation(t *testing.T) {
 	// Now Devotee 2 can book the released slot successfully
 	w3 := httptest.NewRecorder()
 	req3 := httptest.NewRequest("POST", "/api/v1/bookings", bytes.NewBuffer(body2))
+	req3.Header.Set("Idempotency-Key", newIdemKey())
 	req3.Header.Set("Content-Type", "application/json")
 	req3.Header.Set("Authorization", "Bearer "+devToken2)
 	router.ServeHTTP(w3, req3)
@@ -197,6 +201,7 @@ func TestHTTPConcurrentSlotReservationRaceCondition(t *testing.T) {
 			}
 			body, _ := json.Marshal(createReq)
 			req := httptest.NewRequest("POST", "/api/v1/bookings", bytes.NewBuffer(body))
+			req.Header.Set("Idempotency-Key", newIdemKey())
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("Authorization", "Bearer "+userToken)
 			w := httptest.NewRecorder()

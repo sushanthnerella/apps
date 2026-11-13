@@ -14,17 +14,30 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/purohit-platform/backend/internal/auth"
+	"github.com/purohit-platform/backend/internal/db"
 	"github.com/purohit-platform/backend/internal/models"
 )
 
-func issueAdminTestToken(t *testing.T, userID, secret string) string {
+var idemKeySeq atomic.Int64
+
+// newIdemKey returns a unique Idempotency-Key per logical request.
+func newIdemKey() string {
+	return fmt.Sprintf("test-%d-%d", time.Now().UnixNano(), idemKeySeq.Add(1))
+}
+
+func issueAdminTestToken(t *testing.T, storage *db.Storage, label, secret string) string {
+	admin, err := storage.CreateAdminUser(label+"-"+newIdemKey()+"@test.local", "Password123!")
+	if err != nil {
+		t.Fatalf("failed creating admin: %v", err)
+	}
+	userID := admin.ID
 	now := time.Now()
 	claims := auth.CustomClaims{
 		UserID:         userID,
 		Phone:          "+919999900000",
 		Role:           "admin",
 		FullName:       "Admin User",
-		SessionVersion: 1,
+		SessionVersion: admin.SessionVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -366,6 +379,7 @@ func TestHTTPCancellationOfCompletedBookingReturns409Conflict(t *testing.T) {
 	// Devotee attempts cancellation on COMPLETED booking -> 409 Conflict
 	cancelPayload := fmt.Sprintf(`{"booking_id":"%s","reason_code":"DEVOTEE_MISTAKE"}`, bookingID)
 	reqCancel := httptest.NewRequest("POST", "/api/v1/bookings/cancel", bytes.NewBufferString(cancelPayload))
+	reqCancel.Header.Set("Idempotency-Key", newIdemKey())
 	reqCancel.Header.Set("Content-Type", "application/json")
 	reqCancel.Header.Set("Authorization", "Bearer "+devToken)
 	wCancel := httptest.NewRecorder()
@@ -385,6 +399,7 @@ func TestHTTPPilotCancellationPolicy(t *testing.T) {
 		bID, _, devToken, _, _ := createFSMTestBooking(t, router, storage, "+919876540081", "+919876540082")
 		cancelPayload := fmt.Sprintf(`{"booking_id":"%s","reason_code":"DEVOTEE_CHANGE_MIND"}`, bID)
 		req := httptest.NewRequest("POST", "/api/v1/bookings/cancel", bytes.NewBufferString(cancelPayload))
+		req.Header.Set("Idempotency-Key", newIdemKey())
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+devToken)
 		w := httptest.NewRecorder()
@@ -412,6 +427,7 @@ func TestHTTPPilotCancellationPolicy(t *testing.T) {
 
 		cancelPayload := fmt.Sprintf(`{"booking_id":"%s","reason_code":"EMERGENCY"}`, bID)
 		req := httptest.NewRequest("POST", "/api/v1/bookings/cancel", bytes.NewBufferString(cancelPayload))
+		req.Header.Set("Idempotency-Key", newIdemKey())
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+devToken)
 		w := httptest.NewRecorder()
@@ -444,6 +460,7 @@ func TestHTTPPilotCancellationPolicy(t *testing.T) {
 
 		cancelPayload := fmt.Sprintf(`{"booking_id":"%s","reason_code":"CHANGE_MIND"}`, bID)
 		req := httptest.NewRequest("POST", "/api/v1/bookings/cancel", bytes.NewBufferString(cancelPayload))
+		req.Header.Set("Idempotency-Key", newIdemKey())
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+devToken)
 		w := httptest.NewRecorder()
@@ -473,7 +490,7 @@ func TestHTTPAdminCancelEndpoint(t *testing.T) {
 		}
 	}
 
-	adminToken := issueAdminTestToken(t, "admin-user-001", testSecret)
+	adminToken := issueAdminTestToken(t, storage, "admin-user-001", testSecret)
 
 	// Non-admin calling /admin-cancel -> 403 Forbidden
 	reqNonAdmin := httptest.NewRequest("POST", "/api/v1/bookings/"+bID+"/admin-cancel", bytes.NewBufferString(`{"reason":"emergency"}`))
@@ -544,6 +561,7 @@ func TestHTTPAtomicSlotReleaseOnCancellation(t *testing.T) {
 	// Devotee cancels booking
 	cancelPayload := fmt.Sprintf(`{"booking_id":"%s","reason_code":"CHANGE_PLANS"}`, bID)
 	reqCancel := httptest.NewRequest("POST", "/api/v1/bookings/cancel", bytes.NewBufferString(cancelPayload))
+	reqCancel.Header.Set("Idempotency-Key", newIdemKey())
 	reqCancel.Header.Set("Content-Type", "application/json")
 	reqCancel.Header.Set("Authorization", "Bearer "+devToken)
 	wCancel := httptest.NewRecorder()

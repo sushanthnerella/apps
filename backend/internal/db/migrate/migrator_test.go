@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,7 +26,7 @@ func getRootTestConnStr() string {
 	if connStr != "" {
 		return connStr
 	}
-	return "postgres://postgres:123456@localhost:5432/postgres?sslmode=disable"
+	return ""
 }
 
 func getMigrationsDir(t *testing.T) string {
@@ -69,6 +70,9 @@ func getSeedsDir(t *testing.T) string {
 // createIsolatedTestDB creates an ephemeral database and registers a cleanup handler to drop it
 func createIsolatedTestDB(t *testing.T) (*sql.DB, string) {
 	rootConnStr := getRootTestConnStr()
+	if rootConnStr == "" {
+		t.Skip("Explicit PostgreSQL test connection is required")
+	}
 	rootDB, err := sql.Open("postgres", rootConnStr)
 	if err != nil {
 		t.Skipf("Skipping test: cannot connect to root postgres (%v)", err)
@@ -91,7 +95,12 @@ func createIsolatedTestDB(t *testing.T) (*sql.DB, string) {
 		t.Fatalf("failed to create isolated test database %s: %v", testDBName, err)
 	}
 
-	testConnStr := fmt.Sprintf("postgres://postgres:123456@localhost:5432/%s?sslmode=disable", testDBName)
+	testURL, err := url.Parse(rootConnStr)
+	if err != nil || testURL.Host == "" {
+		t.Fatal("test connection must be a PostgreSQL URL")
+	}
+	testURL.Path = "/" + testDBName
+	testConnStr := testURL.String()
 	testDB, err := sql.Open("postgres", testConnStr)
 	if err != nil {
 		rootDB.Exec(fmt.Sprintf(`DROP DATABASE IF EXISTS "%s"`, testDBName))
@@ -924,8 +933,8 @@ func TestValidExistingDataSurvivesUpgrade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Up failed: %v", err)
 	}
-	if applied != 5 {
-		t.Errorf("expected 5 migrations applied (000004 through 000008), got %d", applied)
+	if applied != 13 {
+		t.Errorf("expected 13 migrations applied (000004 through 000016), got %d", applied)
 	}
 
 	// Verify all pre-existing records survive intact
@@ -1337,8 +1346,8 @@ func TestStartupReadinessHistoryGapFailsDespiteLatestVersion(t *testing.T) {
 	// Latest version in schema_migrations is 000008, but intermediate version 000004 is missing
 	var maxVer string
 	_ = db.QueryRowContext(ctx, "SELECT MAX(version) FROM schema_migrations").Scan(&maxVer)
-	if maxVer != "000008" {
-		t.Fatalf("expected max version to be 000008, got %s", maxVer)
+	if maxVer != "000016" {
+		t.Fatalf("expected max version to be 000016, got %s", maxVer)
 	}
 
 	err = migrator.VerifyReadiness(ctx, "000008")

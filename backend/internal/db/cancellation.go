@@ -5,10 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
+	"github.com/purohit-platform/backend/internal/cancellation"
 	"github.com/purohit-platform/backend/internal/lifecycle"
 	"github.com/purohit-platform/backend/internal/models"
 )
@@ -28,11 +28,15 @@ var (
 // while honest about the free pilot model (no false payment gateway / instant bank refund claims).
 func (s *Storage) GetCancellationQuote(bookingID string) (*models.CancellationQuote, error) {
 	var status string
-	var totalAmount float64
-	var dakshinaAmount float64
+	var totalAmountMinor, dakshinaAmountMinor int64
+	var totalAmount, dakshinaAmount float64
 
-	query := `SELECT status, total_amount, COALESCE(dakshina_amount, total_amount) FROM bookings WHERE id = $1`
-	err := s.DB.QueryRow(query, bookingID).Scan(&status, &totalAmount, &dakshinaAmount)
+	query := `SELECT status, 
+                     COALESCE(total_amount_minor, ROUND(total_amount * 100)), 
+                     COALESCE(dakshina_amount_minor, ROUND(COALESCE(dakshina_amount, total_amount) * 100)),
+                     total_amount, COALESCE(dakshina_amount, total_amount) 
+              FROM bookings WHERE id = $1`
+	err := s.DB.QueryRow(query, bookingID).Scan(&status, &totalAmountMinor, &dakshinaAmountMinor, &totalAmount, &dakshinaAmount)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrBookingNotFound
@@ -44,44 +48,7 @@ func (s *Storage) GetCancellationQuote(bookingID string) (*models.CancellationQu
 		return nil, fmt.Errorf("%w: current status is '%s'", ErrTerminalState, status)
 	}
 
-	quote := models.CancellationQuote{
-		BookingID:     bookingID,
-		CurrentStatus: status,
-		AdvancePaid:   totalAmount,
-	}
-
-	switch status {
-	case "REQUESTED", "DISPATCHED", "ACCEPTED":
-		quote.IsFreeCancellation = true
-		quote.CancellationFee = 0.0
-		quote.TravelFee = 0.0
-		quote.PriestCompensation = 0.0
-		quote.RefundAmount = totalAmount
-		quote.PolicyNotice = "Free Pilot: 100% Free Cancellation before priest departs (no charges incurred)"
-
-	case "IN_TRANSIT":
-		quote.IsFreeCancellation = false
-		quote.CancellationFee = 150.0 // Travel allowance credited to priest
-		quote.TravelFee = 150.0
-		quote.PriestCompensation = 150.0
-		quote.RefundAmount = math.Max(0.0, totalAmount-150.0)
-		quote.PolicyNotice = "Free Pilot: Priest is in-transit. Nominal travel allowance Rs. 150 accounted for pilot records."
-
-	case "ARRIVED", "POOJA_STARTED":
-		quote.IsFreeCancellation = false
-		priestShare := math.Round(dakshinaAmount*0.25*100) / 100 // 25% retained for priest
-		quote.CancellationFee = priestShare
-		quote.PriestCompensation = priestShare
-		quote.RefundAmount = math.Max(0.0, totalAmount-priestShare)
-		quote.PolicyNotice = "Free Pilot: Priest has arrived. 25% nominal Dakshina accounted for priest compensation."
-
-	default:
-		quote.IsFreeCancellation = false
-		quote.CancellationFee = 0.0
-		quote.RefundAmount = 0.0
-		quote.PolicyNotice = fmt.Sprintf("Booking is in '%s' status. Cancellation not applicable.", status)
-	}
-
+	quote := cancellation.CalculateRefundQuoteMinor(bookingID, status, totalAmountMinor, dakshinaAmountMinor)
 	return &quote, nil
 }
 
@@ -112,11 +79,15 @@ func (s *Storage) CancelBookingWithRefund(req models.CancelBookingRequest) (*mod
 	var currentStatus string
 	var currentUserID string
 	var currentPriestID sql.NullString
+	var totalAmountMinor, dakshinaAmountMinor int64
 	var totalAmount float64
 	var dakshinaAmount float64
 
 	lockQuery := `
-		SELECT status, user_id::text, COALESCE(priest_id::text, ''), total_amount, COALESCE(dakshina_amount, total_amount)
+		SELECT status, user_id::text, COALESCE(priest_id::text, ''), 
+		       COALESCE(total_amount_minor, ROUND(total_amount * 100)),
+		       COALESCE(dakshina_amount_minor, ROUND(COALESCE(dakshina_amount, total_amount) * 100)),
+		       total_amount, COALESCE(dakshina_amount, total_amount)
 		FROM bookings
 		WHERE id = $1
 		FOR UPDATE
@@ -125,6 +96,8 @@ func (s *Storage) CancelBookingWithRefund(req models.CancelBookingRequest) (*mod
 		&currentStatus,
 		&currentUserID,
 		&currentPriestID,
+		&totalAmountMinor,
+		&dakshinaAmountMinor,
 		&totalAmount,
 		&dakshinaAmount,
 	)
@@ -168,47 +141,11 @@ func (s *Storage) CancelBookingWithRefund(req models.CancelBookingRequest) (*mod
 		return nil, fmt.Errorf("%w: unrecognized cancellation role '%s'", ErrUnauthorizedCancellation, req.CancelledByRole)
 	}
 
-	// Step 4: Calculate Dynamic Quote & Retain Pilot Financial Math
-	quote := models.CancellationQuote{
-		BookingID:     req.BookingID,
-		CurrentStatus: currentStatus,
-		AdvancePaid:   totalAmount,
-	}
-
-	switch currentStatus {
-	case "REQUESTED", "DISPATCHED", "ACCEPTED":
-		quote.IsFreeCancellation = true
-		quote.CancellationFee = 0.0
-		quote.TravelFee = 0.0
-		quote.PriestCompensation = 0.0
-		quote.RefundAmount = totalAmount
-		quote.PolicyNotice = "Free Pilot: 100% Free Cancellation before priest departs (no charges incurred)"
-
-	case "IN_TRANSIT":
-		quote.IsFreeCancellation = false
-		quote.CancellationFee = 150.0
-		quote.TravelFee = 150.0
-		quote.PriestCompensation = 150.0
-		quote.RefundAmount = math.Max(0.0, totalAmount-150.0)
-		quote.PolicyNotice = "Free Pilot: Priest is in-transit. Nominal travel allowance Rs. 150 accounted for pilot records."
-
-	case "ARRIVED", "POOJA_STARTED":
-		quote.IsFreeCancellation = false
-		priestShare := math.Round(dakshinaAmount*0.25*100) / 100
-		quote.CancellationFee = priestShare
-		quote.PriestCompensation = priestShare
-		quote.RefundAmount = math.Max(0.0, totalAmount-priestShare)
-		quote.PolicyNotice = "Free Pilot: Priest has arrived. 25% nominal Dakshina accounted for priest compensation."
-
-	default:
-		quote.IsFreeCancellation = false
-		quote.CancellationFee = 0.0
-		quote.RefundAmount = 0.0
-		quote.PolicyNotice = fmt.Sprintf("Booking is in '%s' status. Cancellation not applicable.", currentStatus)
-	}
+	// Step 4: Calculate Dynamic Quote & Retain Pilot Financial Math (Exact minor integer arithmetic)
+	quote := cancellation.CalculateRefundQuoteMinor(req.BookingID, currentStatus, totalAmountMinor, dakshinaAmountMinor)
 
 	escrowStatus := "REFUNDED_TO_DEVOTEE"
-	if quote.PriestCompensation > 0 {
+	if quote.PriestCompensationMinor > 0 {
 		escrowStatus = "PARTIALLY_REFUNDED"
 	}
 

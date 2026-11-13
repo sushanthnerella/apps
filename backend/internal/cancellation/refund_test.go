@@ -45,3 +45,29 @@ func TestRefundCalculationArrivedState(t *testing.T) {
 		t.Fatalf("Expected %f devotee refund, got %f", expectedRefund, quote.RefundAmount)
 	}
 }
+
+func TestRefundCalculationExactIntegerMinorUnits(t *testing.T) {
+	// Prompt requirement: cancellation quote on 3716.00 INR with the Rs 150 fee returns exact integers
+	totalAmountMinor := int64(371600) // 3716.00 INR
+	quote := CalculateRefundQuoteMinor("booking_minor_001", "IN_TRANSIT", totalAmountMinor, totalAmountMinor)
+
+	if quote.IsFreeCancellation {
+		t.Fatalf("Expected non-free cancellation for IN_TRANSIT status")
+	}
+	if quote.CancellationFeeMinor != 15000 {
+		t.Fatalf("Expected exactly 15000 paise cancellation fee, got %d", quote.CancellationFeeMinor)
+	}
+	if quote.TravelFeeMinor != 15000 {
+		t.Fatalf("Expected exactly 15000 paise travel fee, got %d", quote.TravelFeeMinor)
+	}
+	if quote.PriestCompensationMinor != 15000 {
+		t.Fatalf("Expected exactly 15000 paise priest compensation, got %d", quote.PriestCompensationMinor)
+	}
+	expectedRefundMinor := int64(356600) // 371600 - 15000 = 356600 paise
+	if quote.RefundAmountMinor != expectedRefundMinor {
+		t.Fatalf("Expected exactly %d paise refund, got %d", expectedRefundMinor, quote.RefundAmountMinor)
+	}
+	if quote.RefundAmount != 3566.0 {
+		t.Fatalf("Expected 3566.0 float alias, got %f", quote.RefundAmount)
+	}
+}

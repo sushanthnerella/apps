@@ -1,10 +1,34 @@
 package db
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 
 	"github.com/purohit-platform/backend/internal/models"
 )
+
+// GetOrCreateChatRoomTx ensures a chat room exists for a booking within a transaction
+func (s *Storage) GetOrCreateChatRoomTx(ctx context.Context, tx *sql.Tx, bookingID, userID, priestID string) (string, error) {
+	var roomID string
+	queryFind := `SELECT id FROM chat_rooms WHERE booking_id = $1`
+	err := tx.QueryRowContext(ctx, queryFind, bookingID).Scan(&roomID)
+	if err == nil && roomID != "" {
+		return roomID, nil
+	}
+
+	queryInsert := `
+		INSERT INTO chat_rooms (booking_id, user_id, priest_id) 
+		VALUES ($1, $2, NULLIF($3, '')::uuid) 
+		ON CONFLICT (booking_id) DO UPDATE SET is_active = TRUE 
+		RETURNING id
+	`
+	err = tx.QueryRowContext(ctx, queryInsert, bookingID, userID, priestID).Scan(&roomID)
+	if err != nil {
+		return "", fmt.Errorf("failed to create chat room: %w", err)
+	}
+	return roomID, nil
+}
 
 // GetOrCreateChatRoom ensures a chat room exists for a booking
 func (s *Storage) GetOrCreateChatRoom(bookingID, userID, priestID string) (string, error) {
@@ -74,6 +98,29 @@ func (s *Storage) VerifyChatRoomParticipant(roomID, callerID, callerRole string)
 		return bookingID, nil
 	}
 	return "", fmt.Errorf("access denied: unknown role %s", callerRole)
+}
+
+// SaveChatMessageTx persists an incoming message within a transaction
+func (s *Storage) SaveChatMessageTx(ctx context.Context, tx *sql.Tx, msg models.ChatMessage) (string, error) {
+	senderID := msg.SenderID
+	if senderID == "" || senderID == "system" {
+		senderID = "00000000-0000-0000-0000-000000000000"
+	}
+	query := `
+		INSERT INTO chat_messages (room_id, sender_id, sender_role, message_type, content, attachment_url) 
+		VALUES ($1, $2::uuid, $3, $4, $5, $6) 
+		RETURNING id
+	`
+	var id string
+	err := tx.QueryRowContext(
+		ctx, query, msg.RoomID, senderID, msg.SenderRole,
+		msg.MessageType, msg.Content, msg.AttachmentURL,
+	).Scan(&id)
+
+	if err != nil {
+		return "", fmt.Errorf("failed to save chat message: %w", err)
+	}
+	return id, nil
 }
 
 // SaveChatMessage persists an incoming message from devotee, priest, or system

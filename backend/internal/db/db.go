@@ -2,22 +2,22 @@ package db
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"database/sql"
 	"errors"
 	"fmt"
 	"log"
 	"math"
-	"math/rand"
+	"math/big"
 	"net/url"
-	"sort"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/lib/pq"
 	"github.com/purohit-platform/backend/internal/auth"
 	"github.com/purohit-platform/backend/internal/db/migrate"
-	"github.com/purohit-platform/backend/internal/geo"
 	"github.com/purohit-platform/backend/internal/lifecycle"
 	"github.com/purohit-platform/backend/internal/models"
 	"github.com/redis/go-redis/v9"
@@ -77,7 +77,8 @@ func InitStorage(pgConnStr, redisAddr string) (*Storage, error) {
 		redisOpts = opts
 	} else {
 		redisOpts = &redis.Options{
-			Addr: redisAddr,
+			Addr:     redisAddr,
+			Password: os.Getenv("REDIS_PASSWORD"),
 		}
 	}
 
@@ -281,110 +282,6 @@ func (s *Storage) GetUserProfile(userID, role string) (*models.UserProfile, erro
 	)
 	profile.Role = "devotee"
 	return &profile, err
-}
-
-// GetNearbyPriests finds all active priests around devotee location with real distance and ETA
-func (s *Storage) GetNearbyPriests(devLat, devLon, radiusMeters float64, serviceFilter string) ([]models.NearbyPriest, error) {
-	if radiusMeters <= 0 {
-		radiusMeters = 50000.0 // 50km default radius for metro region
-	}
-
-	query := `
-		SELECT id, full_name, phone, sampradaya, veda_shakha, rating_avg, total_completed_poojas, repeat_booking_count,
-		       latitude, longitude, eta_minutes, vehicle_type, services_offered
-		FROM priests
-		WHERE is_online = true AND location_confirmed = true;
-	`
-	rows, err := s.DB.Query(query)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var allPriests []models.NearbyPriest
-	var filteredPriests []models.NearbyPriest
-
-	for rows.Next() {
-		var p models.NearbyPriest
-		var services pq.StringArray
-		err := rows.Scan(
-			&p.ID, &p.FullName, &p.Phone, &p.Sampradaya, &p.VedaShakha,
-			&p.RatingAvg, &p.TotalCompletedPoojas, &p.RepeatBookingCount,
-			&p.Latitude, &p.Longitude, &p.ETAMinutes, &p.VehicleType, &services,
-		)
-		if err != nil {
-			return nil, err
-		}
-		p.ServicesOffered = []string(services)
-		if len(p.ServicesOffered) == 0 {
-			p.ServicesOffered = []string{"Gruhapravesam (House Warming)", "Sri Satyanarayana Swamy Vratam", "Maha Ganapathi Homa / Yagam", "Navagraha Shanti Homa"}
-		}
-
-		// Compute Haversine Geodesic Distance
-		dist := geo.HaversineDistance(devLat, devLon, p.Latitude, p.Longitude)
-		p.DistanceMeters = math.Round(dist)
-		p.DistanceKm = math.Round((dist/1000.0)*10) / 10
-
-		// Strictly filter priests within the requested radius
-		if p.DistanceMeters > radiusMeters {
-			continue
-		}
-
-		// Update ETA based on transit distance (~2.5 mins per km)
-		computedETA := int(math.Ceil(p.DistanceKm * 3.0))
-		if computedETA < 4 {
-			computedETA = 4
-		}
-		p.ETAMinutes = computedETA
-
-		// Quick Rapido composite score
-		distRatio := p.DistanceMeters / radiusMeters
-		if distRatio > 1.0 {
-			distRatio = 1.0
-		}
-		p.Score = math.Round((0.40*(1.0-distRatio)+0.35*(p.RatingAvg/5.0)+0.25*(float64(p.RepeatBookingCount)/50.0))*100) / 100
-
-		allPriests = append(allPriests, p)
-
-		// Filter by service if specified (supports multi-service selection separated by + or ,)
-		if serviceFilter != "" {
-			filterParts := strings.FieldsFunc(serviceFilter, func(r rune) bool {
-				return r == '+' || r == ','
-			})
-			matches := false
-			for _, part := range filterParts {
-				trimmed := strings.TrimSpace(part)
-				if trimmed == "" {
-					continue
-				}
-				for _, srv := range p.ServicesOffered {
-					if strings.Contains(strings.ToLower(srv), strings.ToLower(trimmed)) ||
-						strings.Contains(strings.ToLower(trimmed), strings.ToLower(srv)) {
-						matches = true
-						break
-					}
-				}
-				if matches {
-					break
-				}
-			}
-			if matches {
-				filteredPriests = append(filteredPriests, p)
-			}
-		}
-	}
-
-	result := filteredPriests
-	if len(result) == 0 {
-		result = allPriests
-	}
-
-	// Sort nearest first (like Rapido shows nearest captains)
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].DistanceMeters < result[j].DistanceMeters
-	})
-
-	return result, nil
 }
 
 // GetCatalog loads pooja catalog packages with optional search, category and language filters
@@ -731,9 +628,16 @@ func (s *Storage) GetUserSessionVersion(userID, role string) (int, error) {
 	table := "users"
 	if role == "priest" {
 		table = "priests"
+	} else if role == "admin" {
+		table = "admin_users"
 	}
 	var version int
-	query := fmt.Sprintf("SELECT COALESCE(session_version, 1) FROM %s WHERE id = $1", table)
+	var query string
+	if role == "admin" {
+		query = fmt.Sprintf("SELECT COALESCE(session_version, 1) FROM %s WHERE id = $1 AND disabled_at IS NULL", table)
+	} else {
+		query = fmt.Sprintf("SELECT COALESCE(session_version, 1) FROM %s WHERE id = $1", table)
+	}
 	err := s.DB.QueryRow(query, userID).Scan(&version)
 	return version, err
 }
@@ -742,7 +646,11 @@ func (s *Storage) GetUserSessionVersion(userID, role string) (int, error) {
 // binds the requested slot if slot_id is provided, populates booking_materials checklist,
 // sets up the chat room, and posts the initial system notification inside an atomic transaction.
 func (s *Storage) CreateBooking(req models.BookingCreateRequest) (string, string, error) {
-	otp := fmt.Sprintf("%04d", rand.Intn(9000)+1000)
+	randomOTP, err := rand.Int(rand.Reader, big.NewInt(10000))
+	if err != nil {
+		return "", "", fmt.Errorf("generate completion code: %w", err)
+	}
+	otp := fmt.Sprintf("%04d", randomOTP.Int64())
 	var bookingID string
 
 	var validUser bool
@@ -815,21 +723,29 @@ func (s *Storage) CreateBooking(req models.BookingCreateRequest) (string, string
 		poojaIDVal = &req.PoojaID
 	}
 
+	if req.TotalAmountMinor == 0 && req.TotalAmount > 0 {
+		req.TotalAmountMinor = int64(math.Round(req.TotalAmount * 100))
+	}
+	if req.TotalAmountMinor > 0 && req.TotalAmount == 0 {
+		req.TotalAmount = float64(req.TotalAmountMinor) / 100.0
+	}
+
 	query := `
 		INSERT INTO bookings (
 			user_id, priest_id, pooja_id, booking_type, status, escrow_status, 
-			total_amount, include_samagri_kit, completion_otp, event_address, latitude, longitude,
+			total_amount, total_amount_minor, include_samagri_kit, completion_otp, event_address, latitude, longitude,
 			scheduled_date, slot_time, devotee_gotram, devotee_nakshatram, devotee_rashi, sankalpam_purpose
 		)
-		VALUES ($1, $2, $3, $4, 'REQUESTED', 'HELD_IN_ESCROW', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		VALUES ($1, $2, $3, $4, 'REQUESTED', 'HELD_IN_ESCROW', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 		RETURNING id;
 	`
 	err = tx.QueryRowContext(ctx, query,
 		req.UserID, priestIDVal, poojaIDVal, req.BookingType,
-		req.TotalAmount, req.IncludeSamagriKit, otp, req.EventAddress, req.Latitude, req.Longitude,
+		req.TotalAmount, req.TotalAmountMinor, req.IncludeSamagriKit, otp, req.EventAddress, req.Latitude, req.Longitude,
 		schedDate, slotTime, gotram, nakshatram, rashi, purpose,
 	).Scan(&bookingID)
 	if err != nil {
+		_ = tx.Rollback()
 		return "", "", err
 	}
 
@@ -837,28 +753,37 @@ func (s *Storage) CreateBooking(req models.BookingCreateRequest) (string, string
 	if req.SlotID != "" {
 		updateSlotBooking := `UPDATE priest_availability_slots SET booked_booking_id = $1::uuid WHERE id = $2::uuid`
 		if _, err := tx.ExecContext(ctx, updateSlotBooking, bookingID, req.SlotID); err != nil {
+			_ = tx.Rollback()
 			return "", "", fmt.Errorf("failed to link slot to booking: %w", err)
 		}
 	}
 
-	// 1. Copy standard items into booking_materials
-	materials, _ := s.GetPoojaSamagri(req.PoojaID)
+	// 1. Copy standard items into booking_materials inside same transaction
+	materials, err := s.GetPoojaSamagriTx(ctx, tx, req.PoojaID)
+	if err != nil {
+		_ = tx.Rollback()
+		return "", "", fmt.Errorf("failed to fetch samagri items: %w", err)
+	}
 	for _, m := range materials {
 		isPriestItem := (m.Category == "Sacred Ritual Samagri")
-		tx.ExecContext(ctx, `
+		_, err := tx.ExecContext(ctx, `
 			INSERT INTO booking_materials (booking_id, item_name, category, quantity, is_included_by_priest)
 			VALUES ($1, $2, $3, $4, $5);
 		`, bookingID, m.ItemName, m.Category, m.Quantity, isPriestItem && req.IncludeSamagriKit)
+		if err != nil {
+			_ = tx.Rollback()
+			return "", "", fmt.Errorf("failed to insert booking material: %w", err)
+		}
 	}
 
-	if err := tx.Commit(); err != nil {
-		return "", "", fmt.Errorf("failed to commit booking transaction: %w", err)
+	// 2. Set up Chat Room inside same transaction
+	roomID, err := s.GetOrCreateChatRoomTx(ctx, tx, bookingID, req.UserID, req.PriestID)
+	if err != nil {
+		_ = tx.Rollback()
+		return "", "", fmt.Errorf("failed to create chat room: %w", err)
 	}
 
-	// 2. Set up Chat Room for live Devotee-Priest coordination
-	roomID, _ := s.GetOrCreateChatRoom(bookingID, req.UserID, req.PriestID)
-
-	// 3. Post Initial System Message with Address, Muhurtham & Items Summary
+	// 3. Post Initial System Message inside same transaction
 	samagriNotice := "Brought by Purohit"
 	if !req.IncludeSamagriKit {
 		samagriNotice = "Arranged by Devotee"
@@ -867,13 +792,21 @@ func (s *Storage) CreateBooking(req models.BookingCreateRequest) (string, string
 		"🕉️ Ritual Booking Requested!\n📅 Scheduled: %s | %s\n✨ Vedic Sankalpam: %s Gotram • %s Nakshatram (%s)\n📍 Event Address: %s\n🪔 Sacred Samagri Kit: %s\n🏡 Devotee: Please have standard household items (Brass plates, Diyas, Ghee, Mats, Rice, Fruits) ready. You can now chat directly here to coordinate directions and arrival.",
 		req.ScheduledDate, req.SlotTime, req.DevoteeGotram, req.DevoteeNakshatram, req.DevoteeRashi, req.EventAddress, samagriNotice,
 	)
-	s.SaveChatMessage(models.ChatMessage{
+	_, err = s.SaveChatMessageTx(ctx, tx, models.ChatMessage{
 		RoomID:      roomID,
 		SenderID:    "00000000-0000-0000-0000-000000000000",
 		SenderRole:  "SYSTEM",
 		MessageType: "SYSTEM_EVENT",
 		Content:     welcomeMsg,
 	})
+	if err != nil {
+		_ = tx.Rollback()
+		return "", "", fmt.Errorf("failed to save initial system message: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", "", fmt.Errorf("failed to commit booking transaction: %w", err)
+	}
 
 	return bookingID, otp, nil
 }
@@ -1052,6 +985,7 @@ func (s *Storage) UpdateBookingStatus(req models.BookingStatusUpdateRequest) (st
 	var slotTimeVal sql.NullString
 	var currentEscrow string
 	var currentDakshina sql.NullFloat64
+	var otpAttempts int
 
 	lockQuery := `
 		SELECT 
@@ -1062,7 +996,7 @@ func (s *Storage) UpdateBookingStatus(req models.BookingStatusUpdateRequest) (st
 			COALESCE(scheduled_date, 'Today'), 
 			COALESCE(slot_time, '09:00 AM'), 
 			escrow_status,
-			COALESCE(dakshina_amount, 0.0)
+			COALESCE(dakshina_amount, 0.0), completion_otp_attempts
 		FROM bookings 
 		WHERE id = $1 
 		FOR UPDATE
@@ -1076,6 +1010,7 @@ func (s *Storage) UpdateBookingStatus(req models.BookingStatusUpdateRequest) (st
 		&slotTimeVal,
 		&currentEscrow,
 		&currentDakshina,
+		&otpAttempts,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1120,8 +1055,23 @@ func (s *Storage) UpdateBookingStatus(req models.BookingStatusUpdateRequest) (st
 		ExpectedOTP:      expectedOTP,
 	}
 
-	if err := lifecycle.ValidateTransition(transReq); err != nil {
-		return "", err
+	validationErr := lifecycle.ValidateTransition(transReq)
+	if req.Status == "COMPLETED" && (validationErr == nil || errors.Is(validationErr, lifecycle.ErrInvalidOTP) || errors.Is(validationErr, lifecycle.ErrMissingOTP)) {
+		if otpAttempts >= 5 {
+			return "", fmt.Errorf("%w: attempt limit reached; contact support", lifecycle.ErrInvalidOTP)
+		}
+		if validationErr != nil {
+			if _, err := tx.ExecContext(ctx, "UPDATE bookings SET completion_otp_attempts = completion_otp_attempts + 1 WHERE id = $1", req.BookingID); err != nil {
+				return "", err
+			}
+			if err := tx.Commit(); err != nil {
+				return "", err
+			}
+			return "", validationErr
+		}
+	}
+	if validationErr != nil {
+		return "", validationErr
 	}
 
 	// 4. Slot Verification and Atomic Handling on Transitions

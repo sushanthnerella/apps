@@ -22,7 +22,7 @@ func TestAdversarialConcurrentCompletionVsAdminCancellation(t *testing.T) {
 		devPhone := fmt.Sprintf("+9197771%05d", trial*2)
 		prPhone := fmt.Sprintf("+9197771%05d", trial*2+1)
 		bID, otp, _, prToken, _ := createFSMTestBooking(t, router, storage, devPhone, prPhone)
-		adminToken := issueAdminTestToken(t, fmt.Sprintf("admin-%d", trial), testSecret)
+		adminToken := issueAdminTestToken(t, storage, fmt.Sprintf("admin-%d", trial), testSecret)
 
 		// Advance booking to POOJA_STARTED
 		for _, st := range []string{"ACCEPTED", "IN_TRANSIT", "ARRIVED", "POOJA_STARTED"} {
@@ -144,6 +144,7 @@ func TestAdversarialConcurrentDevoteeCancelVsPriestArrived(t *testing.T) {
 			<-startGate
 			cancelPayload := fmt.Sprintf(`{"booking_id":"%s","reason_code":"EMERGENCY"}`, bID)
 			req := httptest.NewRequest("POST", "/api/v1/bookings/cancel", bytes.NewBufferString(cancelPayload))
+			req.Header.Set("Idempotency-Key", newIdemKey())
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("Authorization", "Bearer "+devToken)
 			w := httptest.NewRecorder()
@@ -190,11 +191,12 @@ func TestAdversarialConcurrentDevoteeCancelVsPriestArrived(t *testing.T) {
 func TestAdversarialCancelAlreadyCancelledBookingReturns409(t *testing.T) {
 	router, storage, testSecret := setupBookingTestGateway(t)
 	bID, _, devToken, _, _ := createFSMTestBooking(t, router, storage, "+919777300001", "+919777300002")
-	adminToken := issueAdminTestToken(t, "admin-immutability", testSecret)
+	adminToken := issueAdminTestToken(t, storage, "admin-immutability", testSecret)
 
 	// Step 1: Devotee cancels booking in REQUESTED -> 200 OK
 	cancelPayload := fmt.Sprintf(`{"booking_id":"%s","reason_code":"DEVOTEE_CANCEL"}`, bID)
 	req1 := httptest.NewRequest("POST", "/api/v1/bookings/cancel", bytes.NewBufferString(cancelPayload))
+	req1.Header.Set("Idempotency-Key", newIdemKey())
 	req1.Header.Set("Content-Type", "application/json")
 	req1.Header.Set("Authorization", "Bearer "+devToken)
 	w1 := httptest.NewRecorder()
@@ -205,6 +207,7 @@ func TestAdversarialCancelAlreadyCancelledBookingReturns409(t *testing.T) {
 
 	// Step 2: Devotee attempts second cancel via /cancel -> must return 409 Conflict
 	req2 := httptest.NewRequest("POST", "/api/v1/bookings/cancel", bytes.NewBufferString(cancelPayload))
+	req2.Header.Set("Idempotency-Key", newIdemKey())
 	req2.Header.Set("Content-Type", "application/json")
 	req2.Header.Set("Authorization", "Bearer "+devToken)
 	w2 := httptest.NewRecorder()
@@ -240,7 +243,7 @@ func TestAdversarialCancelAlreadyCancelledBookingReturns409(t *testing.T) {
 func TestAdversarialCancelAlreadyCompletedBookingReturns409(t *testing.T) {
 	router, storage, testSecret := setupBookingTestGateway(t)
 	bID, otp, devToken, prToken, _ := createFSMTestBooking(t, router, storage, "+919777400001", "+919777400002")
-	adminToken := issueAdminTestToken(t, "admin-comp-immutability", testSecret)
+	adminToken := issueAdminTestToken(t, storage, "admin-comp-immutability", testSecret)
 
 	// Advance through all stages to COMPLETED
 	for _, st := range []string{"ACCEPTED", "IN_TRANSIT", "ARRIVED", "POOJA_STARTED"} {
@@ -267,6 +270,7 @@ func TestAdversarialCancelAlreadyCompletedBookingReturns409(t *testing.T) {
 	// Devotee attempts cancel via /cancel -> must return 409 Conflict
 	cancelPayload := fmt.Sprintf(`{"booking_id":"%s","reason_code":"DEVOTEE_MISTAKE"}`, bID)
 	reqDevCancel := httptest.NewRequest("POST", "/api/v1/bookings/cancel", bytes.NewBufferString(cancelPayload))
+	reqDevCancel.Header.Set("Idempotency-Key", newIdemKey())
 	reqDevCancel.Header.Set("Content-Type", "application/json")
 	reqDevCancel.Header.Set("Authorization", "Bearer "+devToken)
 	wDevCancel := httptest.NewRecorder()
@@ -319,6 +323,7 @@ func TestAdversarialCancellationAuthorizationDevoteeForbidden(t *testing.T) {
 	// Devotee cancel in ARRIVED via /cancel -> 403 Forbidden
 	cancelPayload := fmt.Sprintf(`{"booking_id":"%s","reason_code":"TOO_LATE"}`, bID)
 	reqArr1 := httptest.NewRequest("POST", "/api/v1/bookings/cancel", bytes.NewBufferString(cancelPayload))
+	reqArr1.Header.Set("Idempotency-Key", newIdemKey())
 	reqArr1.Header.Set("Content-Type", "application/json")
 	reqArr1.Header.Set("Authorization", "Bearer "+devToken)
 	wArr1 := httptest.NewRecorder()
@@ -350,6 +355,7 @@ func TestAdversarialCancellationAuthorizationDevoteeForbidden(t *testing.T) {
 
 	// Devotee cancel in POOJA_STARTED via /cancel -> 403 Forbidden
 	reqPooja1 := httptest.NewRequest("POST", "/api/v1/bookings/cancel", bytes.NewBufferString(cancelPayload))
+	reqPooja1.Header.Set("Idempotency-Key", newIdemKey())
 	reqPooja1.Header.Set("Content-Type", "application/json")
 	reqPooja1.Header.Set("Authorization", "Bearer "+devToken)
 	wPooja1 := httptest.NewRecorder()
@@ -423,6 +429,7 @@ func TestAdversarialSlotReleaseAndRebooking(t *testing.T) {
 	// Now Devotee 1 cancels Booking 1
 	cancelPayload1 := fmt.Sprintf(`{"booking_id":"%s","reason_code":"CHANGE_OF_PLANS"}`, bID1)
 	reqCancel1 := httptest.NewRequest("POST", "/api/v1/bookings/cancel", bytes.NewBufferString(cancelPayload1))
+	reqCancel1.Header.Set("Idempotency-Key", newIdemKey())
 	reqCancel1.Header.Set("Content-Type", "application/json")
 	reqCancel1.Header.Set("Authorization", "Bearer "+devToken1)
 	wCancel1 := httptest.NewRecorder()

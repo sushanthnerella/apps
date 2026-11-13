@@ -164,6 +164,7 @@ func TestAdversarialRoleConfusionAndSpoofing(t *testing.T) {
 
 		cancelPayload := fmt.Sprintf(`{"booking_id":"%s","reason_code":"ATTACK"}`, bID)
 		req := httptest.NewRequest("POST", "/api/v1/bookings/cancel", bytes.NewBufferString(cancelPayload))
+		req.Header.Set("Idempotency-Key", newIdemKey())
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+d2Token)
 		w := httptest.NewRecorder()
@@ -402,8 +403,8 @@ func TestAdversarialCompletionOTPMatrix(t *testing.T) {
 		})
 	}
 
-	// Finally, verify that supplying the EXACT genuine OTP succeeds
-	t.Run("Genuine OTP succeeds", func(t *testing.T) {
+	// Exhausting the attempt budget also rejects the genuine code.
+	t.Run("Genuine OTP cannot bypass lockout", func(t *testing.T) {
 		validPayload := fmt.Sprintf(`{"completion_otp":"%s","dakshina_amount":3000.0}`, realOTP)
 		req := httptest.NewRequest("POST", "/api/v1/bookings/"+bID+"/complete", bytes.NewBufferString(validPayload))
 		req.Header.Set("Content-Type", "application/json")
@@ -411,17 +412,17 @@ func TestAdversarialCompletionOTPMatrix(t *testing.T) {
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected 200 OK for valid completion OTP, got %d: %s", w.Code, w.Body.String())
+		if w.Code != http.StatusConflict {
+			t.Fatalf("expected 409 after exhausting completion attempts, got %d: %s", w.Code, w.Body.String())
 		}
 
-		// Ensure state is now COMPLETED
+		// Failed guesses must never advance the booking.
 		details, err := storage.GetBookingDetails(bID)
 		if err != nil {
 			t.Fatalf("failed fetching details: %v", err)
 		}
-		if details.Status != "COMPLETED" {
-			t.Fatalf("expected status COMPLETED, got %s", details.Status)
+		if details.Status != "POOJA_STARTED" {
+			t.Fatalf("expected status POOJA_STARTED, got %s", details.Status)
 		}
 	})
 }
