@@ -1,4 +1,5 @@
 import React from 'react';
+import LogoutButton from '../components/LogoutButton';
 
 export const metadata = {
   title: 'Puja Vaahini - Temple CMS & VIP Gate Portal',
@@ -37,7 +38,10 @@ export default function RootLayout({
                 <a href="/" style={{ padding: '10px 14px', borderRadius: '8px', color: '#FFFFFF', textDecoration: 'none', backgroundColor: 'rgba(255,255,255,0.15)', fontWeight: 600 }}>
                   📊 Dashboard Overview
                 </a>
-                <a href="/gate-scanner" style={{ padding: '10px 14px', borderRadius: '8px', color: '#FCE7F3', textDecoration: 'none', fontWeight: 600 }}>
+                <a href="/events" style={{ padding: '10px 14px', borderRadius: '8px', color: '#FCE7F3', textDecoration: 'none', fontWeight: 600 }}>
+                  Events (Pushkaralu)
+                </a>
+                <a href="/gate-scanner"style={{ padding: '10px 14px', borderRadius: '8px', color: '#FCE7F3', textDecoration: 'none', fontWeight: 600 }}>
                   ⚡ Gate Scanner (&lt; 50ms)
                 </a>
                 <a href="/vip-pujas" style={{ padding: '10px 14px', borderRadius: '8px', color: '#FCE7F3', textDecoration: 'none', fontWeight: 600 }}>
@@ -61,10 +65,13 @@ export default function RootLayout({
               </nav>
             </div>
 
-            <div style={{ padding: '12px', backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: '8px', fontSize: '12px' }}>
-              <div style={{ fontWeight: 600 }}>Active Temple:</div>
-              <div style={{ color: '#FDF2F8' }}>Dhapurmari Sri Lakshmi Narasimha Swamy Temple</div>
-              <div style={{ color: '#34D399', marginTop: '4px' }}>● Edge Sync Active</div>
+            <div>
+              <div style={{ padding: '12px', backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: '8px', fontSize: '12px' }}>
+                <div style={{ fontWeight: 600 }}>Active Temple:</div>
+                <div style={{ color: '#FDF2F8' }}>Dhapurmari Sri Lakshmi Narasimha Swamy Temple</div>
+                <div style={{ color: '#34D399', marginTop: '4px' }}>● Edge Sync Active</div>
+              </div>
+              <LogoutButton />
             </div>
           </aside>
 

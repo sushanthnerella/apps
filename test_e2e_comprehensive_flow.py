@@ -81,7 +81,8 @@ def run_master_e2e_suite(base_url):
     print("\n[STEP 3] POST /api/v1/auth/register-devotee (Module F)...")
     payload_devotee = {
         "full_name": "Smt. Lakshmi Prasanna",
-        "phone": "+91 94400 55667",
+        "phone": f"+91 94400 {(int(time.time())) % 100000:05d}",
+        "password": "DevoteePassword123",
         "gotram": "Kashyapa",
         "nakshatram": "Rohini",
         "rashi": "Vrishabha",
@@ -91,13 +92,15 @@ def run_master_e2e_suite(base_url):
     status, res_dev, _ = make_request(f"{base_url}/api/v1/auth/register-devotee", method="POST", data=payload_devotee)
     assert status == 200, f"Registration failed: {res_dev}"
     devotee_id = res_dev.get("user_id")
+    devotee_token = res_dev.get("access_token")
     print(f"  [OK] Devotee Registered! User ID: {devotee_id} | Token generated.")
 
     # 4. Priest Registration (Module F)
     print("\n[STEP 4] POST /api/v1/auth/register-priest (Module F)...")
     payload_priest = {
         "full_name": "Brahmasri Venkata Sharma Garu",
-        "phone": "+91 98480 99881",
+        "phone": f"+91 98480 {(int(time.time()) + 1) % 100000:05d}",
+        "password": "PriestPassword123",
         "sampradaya": "Smartha",
         "veda_shakha": "Rigveda Shakha",
         "experience_years": 18,
@@ -109,12 +112,14 @@ def run_master_e2e_suite(base_url):
     status, res_priest, _ = make_request(f"{base_url}/api/v1/auth/register-priest", method="POST", data=payload_priest)
     assert status == 200, f"Priest registration failed: {res_priest}"
     priest_id = res_priest.get("priest_id")
+    priest_token = res_priest.get("access_token")
     print(f"  [OK] Priest Registered! Priest ID: {priest_id} | Sampradaya: {res_priest.get('sampradaya')}")
 
     # 4b. Register Second Priest for Colleague Referral (Module D)
     payload_priest2 = {
         "full_name": "Purohit Srinivasa Dikshitulu",
-        "phone": "+91 98480 99882",
+        "phone": f"+91 98480 {(int(time.time()) + 2) % 100000:05d}",
+        "password": "PriestPassword123",
         "sampradaya": "Smartha",
         "veda_shakha": "Krishna Yajurveda",
         "experience_years": 15,
@@ -125,6 +130,7 @@ def run_master_e2e_suite(base_url):
     }
     _, res_priest2, _ = make_request(f"{base_url}/api/v1/auth/register-priest", method="POST", data=payload_priest2)
     referred_priest_id = res_priest2.get("priest_id")
+    referred_priest_token = res_priest2.get("access_token")
     print(f"  [OK] Colleague Priest Registered! Priest ID: {referred_priest_id}")
 
     # 5. Module A: Priest Availability Slots & 10-Minute Hold Lock
@@ -222,6 +228,7 @@ def run_master_e2e_suite(base_url):
     print("\n[STEP 9] POST /api/v1/bookings & /dispatch/match (Module G)...")
     booking_req = {
         "user_id": devotee_id,
+        "priest_id": priest_id,
         "pooja_id": chosen_pooja.get("id"),
         "booking_type": "CALENDAR_SLOT",
         "include_samagri_kit": False,
@@ -230,7 +237,12 @@ def run_master_e2e_suite(base_url):
         "latitude": 17.3850,
         "longitude": 78.4867
     }
-    status, booking_res, _ = make_request(f"{base_url}/api/v1/bookings", method="POST", data=booking_req)
+    status, booking_res, _ = make_request(
+        f"{base_url}/api/v1/bookings",
+        method="POST",
+        data=booking_req,
+        custom_headers={"Authorization": f"Bearer {devotee_token}"}
+    )
     assert status == 200, f"Booking creation failed: {booking_res}"
     booking_id = booking_res.get("booking_id")
     completion_otp = booking_res.get("completion_otp")
@@ -253,24 +265,63 @@ def run_master_e2e_suite(base_url):
     # 10. Module C: Real-Time In-App Chat
     print("\n[STEP 10] POST /api/v1/chat/rooms & GET /messages (Module C)...")
     chat_room_payload = {
-        "booking_id": booking_id,
-        "user_id": devotee_id,
-        "priest_id": best_priest.get("id")
+        "booking_id": booking_id
     }
-    status, res_chat, _ = make_request(f"{base_url}/api/v1/chat/rooms", method="POST", data=chat_room_payload)
+
+    # Negative check 1: Unauthenticated request must return 401 Unauthorized
+    unauth_st, unauth_res, _ = make_request(f"{base_url}/api/v1/chat/rooms", method="POST", data=chat_room_payload)
+    assert unauth_st == 401, f"Expected 401 for unauthenticated chat room creation, got {unauth_st}: {unauth_res}"
+    print(f"  [OK] Security Invariant: Unauthenticated chat room creation rejected with 401 Unauthorized")
+
+    # Negative check 2: Nonparticipant request (another priest or devotee) must return 403 Forbidden
+    other_dev_payload = {
+        "full_name": "Nonparticipant Devotee",
+        "phone": f"+91 94400 {(int(time.time()) + 7) % 100000:05d}",
+        "password": "Password123",
+        "gotram": "Kashyapa",
+        "nakshatram": "Rohini",
+        "rashi": "Vrishabha",
+        "city": "Hyderabad",
+        "consent_agreed": True
+    }
+    st_nonpart, res_nonpart, _ = make_request(f"{base_url}/api/v1/auth/register-devotee", method="POST", data=other_dev_payload)
+    assert st_nonpart == 200, f"Registration of nonparticipant failed: {res_nonpart}"
+    nonparticipant_token = res_nonpart.get("access_token")
+
+    nonpart_st, nonpart_res, _ = make_request(
+        f"{base_url}/api/v1/chat/rooms",
+        method="POST",
+        data=chat_room_payload,
+        custom_headers={"Authorization": f"Bearer {nonparticipant_token}"}
+    )
+    assert nonpart_st == 403, f"Expected 403 for nonparticipant, got {nonpart_st}: {nonpart_res}"
+    print(f"  [OK] Security Invariant: Nonparticipant chat room access rejected with 403 Forbidden")
+
+    # Positive check: Legitimate booking participant (devotee) creates/accesses chat room
+    status, res_chat, _ = make_request(
+        f"{base_url}/api/v1/chat/rooms",
+        method="POST",
+        data=chat_room_payload,
+        custom_headers={"Authorization": f"Bearer {devotee_token}"}
+    )
     assert status == 200, f"Chat room creation failed: {res_chat}"
     chat_room_id = res_chat.get("room_id")
-    print(f"  [OK] In-App Chat Room Initialized: Room ID {chat_room_id}")
+    print(f"  [OK] In-App Chat Room Initialized with Bearer Auth: Room ID {chat_room_id}")
 
     # 11. Module D: Priest Colleague Referral (Instant Auto-Reassignment)
     print("\n[STEP 11] POST /api/v1/bookings/refer (Module D)...")
     referral_payload = {
         "booking_id": booking_id,
-        "referring_priest_id": best_priest.get("id"),
+        "referring_priest_id": priest_id,
         "referred_priest_id": referred_priest_id,
         "reason": "Sudden emergency out of town. Referred to senior colleague Dikshitulu garu."
     }
-    status, res_refer, _ = make_request(f"{base_url}/api/v1/bookings/refer", method="POST", data=referral_payload)
+    status, res_refer, _ = make_request(
+        f"{base_url}/api/v1/bookings/refer",
+        method="POST",
+        data=referral_payload,
+        custom_headers={"Authorization": f"Bearer {priest_token}"}
+    )
     assert status == 200 and res_refer.get("status") == "REASSIGNED", f"Referral failed: {res_refer}"
     print(f"  [OK] Colleague Referral: Booking auto-reassigned instantly to {res_refer.get('referred_priest_id')}")
 
@@ -315,12 +366,29 @@ def run_master_e2e_suite(base_url):
 
     # 13. Module G: Swiggy Cancellation & Refund Quote
     print("\n[STEP 13] GET & POST /api/v1/bookings/{id}/cancel-quote & /cancel (Module G)...")
-    # Transition to IN_TRANSIT
+    # Transition: REQUESTED -> ACCEPTED -> IN_TRANSIT
+    st_acc, res_acc, _ = make_request(
+        f"{base_url}/api/v1/bookings/status",
+        method="POST",
+        data={"booking_id": booking_id, "status": "ACCEPTED", "priest_id": referred_priest_id},
+        custom_headers={"Authorization": f"Bearer {referred_priest_token}"}
+    )
+    assert st_acc == 200, f"Transition to ACCEPTED failed: {res_acc}"
+
     status_req = {"booking_id": booking_id, "status": "IN_TRANSIT", "priest_id": referred_priest_id}
-    make_request(f"{base_url}/api/v1/bookings/status", method="POST", data=status_req)
+    st_tr, res_tr, _ = make_request(
+        f"{base_url}/api/v1/bookings/status",
+        method="POST",
+        data=status_req,
+        custom_headers={"Authorization": f"Bearer {referred_priest_token}"}
+    )
+    assert st_tr == 200, f"Transition to IN_TRANSIT failed: {res_tr}"
 
     # Devotee opens cancellation modal -> gets quote
-    status, quote_res, _ = make_request(f"{base_url}/api/v1/bookings/{booking_id}/cancel-quote")
+    status, quote_res, _ = make_request(
+        f"{base_url}/api/v1/bookings/{booking_id}/cancel-quote",
+        custom_headers={"Authorization": f"Bearer {devotee_token}"}
+    )
     assert status == 200, f"Quote failed: {quote_res}"
     assert quote_res.get("travel_fee") == 150.0, f"Expected 150.0 travel fee in IN_TRANSIT, got {quote_res.get('travel_fee')}"
     print(f"  [OK] Swiggy Cancellation Quote: Rs. 150 travel fee credited to priest, remainder (Rs. {quote_res.get('refund_amount')}) refunded instantly to devotee.")
@@ -329,6 +397,7 @@ def run_master_e2e_suite(base_url):
     print("\n[STEP 14] Pooja Lifecycle & 4-Digit OTP Escrow Release...")
     booking_req2 = {
         "user_id": devotee_id,
+        "priest_id": priest_id,
         "pooja_id": chosen_pooja.get("id"),
         "booking_type": "INSTANT_DISPATCH",
         "include_samagri_kit": True,
@@ -337,19 +406,30 @@ def run_master_e2e_suite(base_url):
         "latitude": 17.3850,
         "longitude": 78.4867
     }
-    _, b2_res, _ = make_request(f"{base_url}/api/v1/bookings", method="POST", data=booking_req2)
+    _, b2_res, _ = make_request(
+        f"{base_url}/api/v1/bookings",
+        method="POST",
+        data=booking_req2,
+        custom_headers={"Authorization": f"Bearer {devotee_token}"}
+    )
     b2_id = b2_res.get("booking_id")
     b2_otp = b2_res.get("completion_otp")
 
     # Lifecycle stepper: ACCEPTED -> IN_TRANSIT -> ARRIVED -> POOJA_STARTED -> COMPLETED
     for st in ["ACCEPTED", "IN_TRANSIT", "ARRIVED", "POOJA_STARTED"]:
-        make_request(f"{base_url}/api/v1/bookings/status", method="POST", data={"booking_id": b2_id, "status": st, "priest_id": priest_id})
+        make_request(
+            f"{base_url}/api/v1/bookings/status",
+            method="POST",
+            data={"booking_id": b2_id, "status": st, "priest_id": priest_id},
+            custom_headers={"Authorization": f"Bearer {priest_token}"}
+        )
 
     # Release with valid OTP
     status, complete_res, _ = make_request(
         f"{base_url}/api/v1/bookings/status",
         method="POST",
-        data={"booking_id": b2_id, "status": "COMPLETED", "completion_otp": b2_otp, "dakshina_amount": 3716.0}
+        data={"booking_id": b2_id, "status": "COMPLETED", "completion_otp": b2_otp, "dakshina_amount": 3716.0},
+        custom_headers={"Authorization": f"Bearer {priest_token}"}
     )
     assert status == 200 and complete_res.get("escrow_status") == "RELEASED_TO_PRIEST", f"Escrow release failed: {complete_res}"
     print(f"  [OK] Sacred Pooja Completed & Escrow Released to Purohit: {complete_res.get('escrow_status')}")

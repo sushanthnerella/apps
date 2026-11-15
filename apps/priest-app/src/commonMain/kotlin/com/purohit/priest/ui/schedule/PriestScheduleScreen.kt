@@ -1,230 +1,101 @@
 package com.purohit.priest.ui.schedule
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import com.purohit.contracts.i18n.AppLanguage
+import com.purohit.priest.LocalPriestLanguage
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.purohit.contracts.i18n.StringContract
-import com.purohit.contracts.slots.PriestSlot
+import com.purohit.priest.network.PriestSlotPayload
 import com.purohit.priest.network.PurohitApiClient
 import kotlinx.coroutines.launch
+import kotlinx.datetime.Clock
+import kotlinx.datetime.Instant
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.atStartOfDayIn
+import kotlinx.datetime.toLocalDateTime
 
 @Composable
-fun PriestScheduleScreen(
-    priestId: String = "6e7d277c-4ee2-469f-96ac-331517389762",
-    strings: StringContract
-) {
-    var selectedDate by remember { mutableStateOf("Tomorrow (Nov 4)") }
-    val slots = remember {
-        mutableStateListOf(
-            PriestSlot("s1", priestId, "2026-11-04", "05:30", "07:30", isBooked = false),
-            PriestSlot("s2", priestId, "2026-11-04", "08:30", "10:30", isBooked = true),
-            PriestSlot("s3", priestId, "2026-11-04", "11:45", "13:45", isBooked = true),
-            PriestSlot("s4", priestId, "2026-11-04", "17:30", "19:30", isBooked = false)
-        )
+fun PriestScheduleScreen(priestId: String = "", strings: StringContract) {
+    val language = LocalPriestLanguage.current
+    fun tr(en: String, te: String, hi: String) = when (language) { AppLanguage.TELUGU -> te; AppLanguage.HINDI -> hi; else -> en }
+    var date by remember { mutableStateOf("") }
+    var start by remember { mutableStateOf("") }
+    var end by remember { mutableStateOf("") }
+    var slots by remember { mutableStateOf<List<PriestSlotPayload>>(emptyList()) }
+    var message by remember(language) { mutableStateOf(tr("Enter a date to view or publish availability.", "అందుబాటు చూడడానికి లేదా ప్రచురించడానికి తేదీని ఎంచుకోండి.", "उपलब्धता देखने या प्रकाशित करने के लिए तारीख चुनें।")) }
+    var loading by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val validDate = Regex("\\d{4}-\\d{2}-\\d{2}")
+    val validTime = Regex("(?:[01]\\d|2[0-3]):[0-5]\\d")
+    suspend fun refreshNow(requestedDate: String) {
+        PurohitApiClient.fetchPriestSlots(priestId, requestedDate).onSuccess {
+            slots = it
+            message = if (it.isEmpty()) tr("No slots published", "సమయాలు ప్రచురించలేదు", "कोई समय प्रकाशित नहीं है") else tr("Published availability", "ప్రచురించిన అందుబాటు", "प्रकाशित उपलब्धता")
+        }.onFailure { slots = emptyList(); message = tr("Could not load availability. Please retry.", "అందుబాటు పొందలేకపోయాము. మళ్లీ ప్రయత్నించండి.", "उपलब्धता नहीं मिली। फिर से प्रयास करें।") }
+    }
+    fun refresh() {
+        if (!validDate.matches(date)) { message = tr("Enter a valid date.", "సరైన తేదీని ఎంచుకోండి.", "सही तारीख चुनें।"); return }
+        val requestedDate = date
+        loading = true
+        scope.launch {
+            try { refreshNow(requestedDate) } finally { loading = false }
+        }
     }
 
-    val coroutineScope = rememberCoroutineScope()
-
-    LaunchedEffect(selectedDate) {
-        val dateParam = if (selectedDate.contains("Today")) "2026-11-03" else if (selectedDate.contains("Tomorrow")) "2026-11-04" else "2026-11-10"
-        val res = PurohitApiClient.fetchPriestSlots(priestId, dateParam)
-        res.onSuccess { remoteSlots ->
-            slots.clear()
-            remoteSlots.forEach { r ->
-                slots.add(
-                    PriestSlot(
-                        id = r.id,
-                        priestId = r.priest_id,
-                        slotDate = r.slot_date,
-                        startTime = r.start_time.take(5),
-                        endTime = r.end_time.take(5),
-                        isBooked = r.is_booked
-                    )
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(tr("Availability", "అందుబాటు", "उपलब्धता"), style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
+        IndiaDatePicker(value = date, language = language, enabled = !loading, onDateSelected = { date = it; slots = emptyList() })
+        Button(onClick = { refresh() }, enabled = !loading) { Text(tr("View slots", "సమయాలు చూడండి", "समय देखें")) }
+        Text(message, style = MaterialTheme.typography.bodySmall)
+        OutlinedTextField(value = start, onValueChange = { start = it }, label = { Text(tr("Start time (24-hour IST)", "ప్రారంభ సమయం (24 గంటలు IST)", "आरंभ समय (24 घंटे IST)")) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(value = end, onValueChange = { end = it }, label = { Text(tr("End time (24-hour IST)", "ముగింపు సమయం (24 గంటలు IST)", "समाप्ति समय (24 घंटे IST)")) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        Button(onClick = {
+            if (!validDate.matches(date) || !validTime.matches(start) || !validTime.matches(end) || start >= end) {
+                message = tr("Enter a valid date and times; end must be after start.", "సరైన తేదీ, సమయాలు నమోదు చేయండి; ముగింపు ప్రారంభం తర్వాత ఉండాలి.", "सही तारीख और समय दर्ज करें; समाप्ति समय बाद में होना चाहिए।")
+            } else {
+                val requestedDate = date
+                val requestedStart = start
+                val requestedEnd = end
+                scope.publishThenRefresh(
+                    publish = { PurohitApiClient.createPriestSlot(priestId, requestedDate, requestedStart, requestedEnd).map { Unit } },
+                    refresh = { refreshNow(requestedDate) },
+                    setLoading = { loading = it },
+                    onFailure = { message = tr("Could not publish the slot. Please try again.", "సమయాన్ని ప్రచురించలేకపోయాము. మళ్లీ ప్రయత్నించండి.", "समय प्रकाशित नहीं हो सका। फिर से प्रयास करें।") }
                 )
             }
-        }
-    }
-
-    var showAddSlotModal by remember { mutableStateOf(false) }
-    var newStartTime by remember { mutableStateOf("07:00") }
-    var newEndTime by remember { mutableStateOf("09:30") }
-
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column {
-                Text(
-                    text = "📅 " + strings.common.tabSchedule,
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Text(
-                    text = "Vedic Muhurtham Calendar • Auto-blocks on booking acceptance",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray
-                )
-            }
-            FilledTonalButton(onClick = { showAddSlotModal = true }) {
-                Text("+ Slot")
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Date Tabs
-        Surface(
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Row(
-                modifier = Modifier.padding(6.dp).fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceAround
-            ) {
-                listOf("Today (Nov 3)", "Tomorrow (Nov 4)", "Next Week (Nov 10)").forEach { d ->
-                    Surface(
-                        color = if (selectedDate.contains(d.take(6))) MaterialTheme.colorScheme.primary else Color.Transparent,
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.clickable { selectedDate = d }
-                    ) {
-                        Text(
-                            text = d,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            color = if (selectedDate.contains(d.take(6))) Color.White else Color.Black,
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.labelMedium
-                        )
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Text(
-            text = "Hourly Muhurtham Windows ($selectedDate)",
-            fontWeight = FontWeight.Bold,
-            style = MaterialTheme.typography.titleSmall
-        )
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        if (slots.isEmpty()) {
-            Box(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("📅", style = MaterialTheme.typography.displayMedium)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        "No availability slots published for $selectedDate",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium,
-                        color = Color.Gray
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        "Tap '+ Slot' above to configure a Vedic Muhurtham window.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.Gray
-                    )
-                }
-            }
-        } else {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.weight(1f)
-            ) {
-            items(slots) { slot ->
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (slot.isBooked) Color(0xFFFEE2E2) else Color(0xFFECFDF5)
-                    )
-                ) {
-                    Row(
-                        modifier = Modifier.padding(16.dp).fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(
-                                text = "⏰ ${slot.startTime} - ${slot.endTime}",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = if (slot.isBooked) Color(0xFF991B1B) else Color(0xFF065F46)
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = if (slot.isBooked) "🔴 Booked (Sri Satyanarayana Swamy Vratam - Sushanth2) • Escrow Locked" else "🟢 Available for Instant Reservation",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (slot.isBooked) Color(0xFF991B1B) else Color.DarkGray,
-                                fontWeight = if (slot.isBooked) FontWeight.Bold else FontWeight.Normal
-                            )
-                        }
-
-                        if (!slot.isBooked) {
-                            TextButton(onClick = { slots.remove(slot) }) {
-                                Text("Remove", color = Color.Gray)
-                            }
-                        }
-                    }
-                }
+        }, enabled = !loading) { Text(tr("Publish slot", "సమయం ప్రచురించండి", "समय प्रकाशित करें")) }
+        slots.forEach { slot ->
+            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                val status = if (slot.is_booked) tr("Booked", "బుక్ చేయబడింది", "बुक किया गया") else if (slot.is_held) tr("Held", "తాత్కాలికంగా నిలిపారు", "अस्थायी रूप से आरक्षित") else tr("Available", "అందుబాటులో ఉంది", "उपलब्ध")
+                Text("${slot.start_time.take(5)} – ${slot.end_time.take(5)}  •  $status", modifier = Modifier.padding(16.dp))
             }
         }
     }
-    }
+}
 
-    if (showAddSlotModal) {
-        AlertDialog(
-            onDismissRequest = { showAddSlotModal = false },
-            title = { Text("Add Availability Slot", fontWeight = FontWeight.Bold) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(
-                        value = newStartTime,
-                        onValueChange = { newStartTime = it },
-                        label = { Text("Start Time (HH:MM)") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = newEndTime,
-                        onValueChange = { newEndTime = it },
-                        label = { Text("End Time (HH:MM)") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        slots.add(PriestSlot("s_${slots.size + 1}", priestId, "2026-11-04", newStartTime, newEndTime))
-                        showAddSlotModal = false
-                    }
-                ) {
-                    Text("Add Window")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showAddSlotModal = false }) {
-                    Text("Cancel")
-                }
-            }
-        )
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun IndiaDatePicker(value: String, language: AppLanguage, enabled: Boolean, onDateSelected: (String) -> Unit) {
+    var showPicker by remember { mutableStateOf(false) }
+    val today = remember { Clock.System.now().toLocalDateTime(TimeZone.of("Asia/Kolkata")).date }
+    val minimumUtc = remember(today) { today.atStartOfDayIn(TimeZone.UTC).toEpochMilliseconds() }
+    val displayed = value.split("-").let { if (it.size == 3) "${it[2]}/${it[1]}/${it[0]}" else "Select date" }
+    OutlinedButton(onClick = { showPicker = true }, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text(if (value.isEmpty()) when (language) { AppLanguage.TELUGU -> "తేదీ ఎంచుకోండి (DD/MM/YYYY)"; AppLanguage.HINDI -> "तारीख चुनें (DD/MM/YYYY)"; else -> "Select date (DD/MM/YYYY)" } else displayed) }
+    if (showPicker) {
+        val picker = rememberDatePickerState(initialSelectedDateMillis = value.takeIf { it.isNotBlank() }?.let { runCatching { LocalDate.parse(it).atStartOfDayIn(TimeZone.UTC).toEpochMilliseconds() }.getOrNull() } ?: minimumUtc,
+            selectableDates = remember(minimumUtc) { object : SelectableDates { override fun isSelectableDate(utcTimeMillis: Long) = utcTimeMillis >= minimumUtc } })
+        DatePickerDialog(onDismissRequest = { showPicker = false }, confirmButton = { TextButton(onClick = {
+            picker.selectedDateMillis?.let { onDateSelected(Instant.fromEpochMilliseconds(it).toLocalDateTime(TimeZone.UTC).date.toString()) }
+            showPicker = false
+        }) { Text("OK") } }, dismissButton = { TextButton(onClick = { showPicker = false }) { Text("Cancel") } }) { DatePicker(state = picker, showModeToggle = false) }
     }
 }

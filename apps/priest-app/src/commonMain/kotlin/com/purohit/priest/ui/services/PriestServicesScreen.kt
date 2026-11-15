@@ -1,6 +1,8 @@
 package com.purohit.priest.ui.services
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -25,37 +27,19 @@ fun PriestServicesScreen(
     strings: StringContract
 ) {
     val coroutineScope = rememberCoroutineScope()
-    val customServices = remember {
-        mutableStateListOf(
-            CustomServiceItem(
-                id = "cs1",
-                priestId = priestId,
-                title = if (currentLanguage == AppLanguage.TELUGU) "నవగ్రహ + ధన్వంతరి మహా హోమం (ప్రత్యేక పౌరోహిత్యం)" else "Navagraha + Dhanvantari Maha Homa Special",
-                category = "Remedial Homa",
-                dakshinaFee = 7500.0,
-                samagriKitPrice = 2200.0,
-                durationMinutes = 120,
-                description = if (currentLanguage == AppLanguage.TELUGU) "గ్రహ శాంతి, వ్యాధి నివారణ మరియు సంపూర్ణ కుటుంబ సౌభాగ్యము కొరకు ఆచార్యుల ప్రత్యేక హోమము." else "Specialized Vedic ritual invoking longevity, planetary harmony, and family peace."
-            ),
-            CustomServiceItem(
-                id = "cs2",
-                priestId = priestId,
-                title = if (currentLanguage == AppLanguage.TELUGU) "శ్రీ లలితా సహస్రనామ కుంకుమార్చన + చండీ పారాయణం" else "Sri Lalitha Sahasranama Kumkumarchana + Chandi Parayanam",
-                category = "Devi Archana",
-                dakshinaFee = 3516.0,
-                samagriKitPrice = 1100.0,
-                durationMinutes = 90,
-                description = if (currentLanguage == AppLanguage.TELUGU) "వేద మంత్రోచ్ఛారణతో సాగే పవిత్ర దేవీ కుంకుమార్చన." else "Sacred Devi worship with authentic Vedic chanting and pure Kumkumarchana."
-            )
-        )
-    }
+    val customServices = remember { mutableStateListOf<CustomServiceItem>() }
+    var isLoading by remember { mutableStateOf(true) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+    var createError by remember { mutableStateOf<String?>(null) }
 
     fun loadServices() {
+        isLoading = true
+        loadError = null
         coroutineScope.launch {
             val res = PurohitApiClient.fetchCustomServices(lang = currentLanguage.isoCode)
             res.onSuccess { remoteList ->
-                if (remoteList.isNotEmpty()) {
-                    customServices.clear()
+                customServices.clear()
+                run {
                     remoteList.forEach { r ->
                         customServices.add(
                             CustomServiceItem(
@@ -72,7 +56,8 @@ fun PriestServicesScreen(
                         )
                     }
                 }
-            }
+            }.onFailure { loadError = "Could not load services. Please try again." }
+            isLoading = false
         }
     }
 
@@ -82,9 +67,9 @@ fun PriestServicesScreen(
 
     var showCreateModal by remember { mutableStateOf(false) }
     var newTitle by remember { mutableStateOf("") }
-    var newDakshina by remember { mutableStateOf("5116") }
-    var newSamagriFee by remember { mutableStateOf("1500") }
-    var newDuration by remember { mutableStateOf("90") }
+    var newDakshina by remember { mutableStateOf("") }
+    var newSamagriFee by remember { mutableStateOf("") }
+    var newDuration by remember { mutableStateOf("") }
     var newDescription by remember { mutableStateOf("") }
     var isSubmitting by remember { mutableStateOf(false) }
 
@@ -107,7 +92,7 @@ fun PriestServicesScreen(
                 Text(
                     text = if (isTelugu) "మీ వ్యక్తిగత దక్షిణ మరియు ప్రత్యేక వైదిక సేవల జాబితా" else if (isHindi) "आपकी व्यक्तिगत दक्षिणा एवं विशिष्ट पूजा सेवाओं की सूची" else "Customized ritual offerings with personalized Dakshina fees",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Button(onClick = { showCreateModal = true }) {
@@ -117,6 +102,14 @@ fun PriestServicesScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        if (isLoading) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        } else if (loadError != null) {
+            Text(loadError!!, color = MaterialTheme.colorScheme.error)
+            TextButton(onClick = { loadServices() }) { Text("Retry") }
+        } else if (customServices.isEmpty()) {
+            Text(if (isTelugu) "సేవలు ఇంకా లేవు" else if (isHindi) "अभी कोई सेवा नहीं है" else "No services yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         LazyColumn(
             verticalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier.weight(1f)
@@ -155,7 +148,7 @@ fun PriestServicesScreen(
 
                         Spacer(modifier = Modifier.height(6.dp))
 
-                        Text(cs.description, style = MaterialTheme.typography.bodySmall, color = Color.DarkGray)
+                        Text(cs.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
                         Spacer(modifier = Modifier.height(12.dp))
 
@@ -173,21 +166,10 @@ fun PriestServicesScreen(
                                 Text(
                                     "${if (isTelugu) "సామాగ్రి కిట్" else if (isHindi) "सामग्री किट" else "Samagri Kit"}: +₹${cs.samagriKitPrice.toInt()}",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = Color.Gray
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = Color(0xFFDCFCE7)
-                            ) {
-                                Text(
-                                    text = if (isTelugu) "3 భాషల అనువాదం సిద్ధం" else if (isHindi) "3 भाषाओं में अनुवादित" else "3 Languages Active",
-                                    color = Color(0xFF15803D),
-                                    fontWeight = FontWeight.Bold,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                )
-                            }
+
                         }
                     }
                 }
@@ -205,7 +187,8 @@ fun PriestServicesScreen(
                 )
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    createError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     OutlinedTextField(
                         value = newTitle,
                         onValueChange = { newTitle = it },
@@ -241,22 +224,28 @@ fun PriestServicesScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        if (newTitle.isNotBlank()) {
+                        if (newTitle.isNotBlank() && (newDakshina.toDoubleOrNull() ?: -1.0) >= 0 && (newSamagriFee.toDoubleOrNull() ?: -1.0) >= 0 && (newDuration.toIntOrNull() ?: 0) > 0) {
+                            createError = null
                             isSubmitting = true
                             coroutineScope.launch {
                                 val payload = CreateCustomServicePayload(
                                     priest_id = priestId,
                                     title = newTitle,
-                                    dakshina_fee = newDakshina.toDoubleOrNull() ?: 5116.0,
-                                    samagri_kit_price = newSamagriFee.toDoubleOrNull() ?: 1500.0,
-                                    duration_minutes = newDuration.toIntOrNull() ?: 90,
-                                    description = if (newDescription.isNotBlank()) newDescription else "పురోహితులు నిర్వహించే పవిత్ర వేదోక్త పూజా విధానము."
+                                    dakshina_fee = newDakshina.toDouble(),
+                                    samagri_kit_price = newSamagriFee.toDouble(),
+                                    duration_minutes = newDuration.toInt(),
+                                    description = newDescription
                                 )
-                                PurohitApiClient.createCustomService(payload)
+                                PurohitApiClient.createCustomService(payload).onSuccess {
+                                    showCreateModal = false
+                                    loadServices()
+                                }.onFailure {
+                                    createError = "Could not save the service. Please try again."
+                                }
                                 isSubmitting = false
-                                showCreateModal = false
-                                loadServices()
                             }
+                        } else {
+                            createError = "Enter a title, valid prices and a duration."
                         }
                     },
                     enabled = !isSubmitting

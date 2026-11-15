@@ -44,3 +44,8 @@ backend/vendor/
 /backend/.env
 /backend/.env.*
 !/backend/.env.example
+
+# Local emulator test reports
+/output/
+# Local AI agent scratch notes
+/.agents/

@@ -14,6 +14,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.purohit.contracts.cancellation.CancellationQuote
 import com.purohit.contracts.i18n.StringContract
+import com.purohit.contracts.i18n.AppLanguage
+import com.purohit.devotee.LocalAppLanguage
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -21,9 +23,15 @@ fun SwiggyCancellationModal(
     quote: CancellationQuote,
     strings: StringContract,
     onConfirmCancel: (reason: String) -> Unit,
-    onRescheduleInstead: () -> Unit,
+    isSubmitting: Boolean = false,
     onDismiss: () -> Unit
 ) {
+    val language = LocalAppLanguage.current
+    fun tr(en: String, te: String, hi: String) = when (language) {
+        AppLanguage.TELUGU -> te
+        AppLanguage.HINDI -> hi
+        else -> en
+    }
     var selectedReason by remember { mutableStateOf(strings.cancellation.reasonPriestDelayed) }
 
     val reasons = remember(strings) {
@@ -37,7 +45,7 @@ fun SwiggyCancellationModal(
     }
 
     ModalBottomSheet(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (!isSubmitting) onDismiss() },
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
     ) {
         Column(
@@ -57,7 +65,7 @@ fun SwiggyCancellationModal(
             Text(
                 text = strings.cancellation.cancelWarningHeader,
                 style = MaterialTheme.typography.bodyMedium,
-                color = Color.DarkGray
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             Spacer(modifier = Modifier.height(14.dp))
@@ -65,51 +73,21 @@ fun SwiggyCancellationModal(
             // Policy Notice Banner
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = if (quote.isFreeCancellation) Color(0xFFD1FAE5) else Color(0xFFFEF3C7),
+                color = if (quote.isFreeCancellation) Color(0xFFD1FAE5) else MaterialTheme.colorScheme.surfaceVariant,
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
                     Text(
-                        text = if (quote.isFreeCancellation) "✓ Free Cancellation Policy" else "⚠️ Nominal Travel Fee Applies",
+                        text = tr("Cancellation", "రద్దు", "रद्द करना"),
                         fontWeight = FontWeight.Bold,
                         color = if (quote.isFreeCancellation) Color(0xFF065F46) else Color(0xFF92400E)
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = quote.policyNotice,
+                        text = tr("No online payment was collected. Confirm any priest or materials charges directly.", "ఆన్‌లైన్ చెల్లింపు వసూలు చేయలేదు. పురోహితులు లేదా సామగ్రి ఛార్జీలను నేరుగా నిర్ధారించుకోండి.", "कोई ऑनलाइन भुगतान नहीं लिया गया। पुरोहित या सामग्री का शुल्क सीधे सुनिश्चित करें।"),
                         style = MaterialTheme.typography.bodySmall,
                         color = Color.Black
                     )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Retention Rescue Hook
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text(
-                        text = "🗓️ " + strings.cancellation.retentionRescueTitle,
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = strings.cancellation.retentionRescueDescription,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedButton(
-                        onClick = onRescheduleInstead,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text(strings.cancellation.rescheduleInsteadCTA)
-                    }
                 }
             }
 
@@ -141,49 +119,20 @@ fun SwiggyCancellationModal(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Refund Summary Box
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Text(
-                        text = strings.cancellation.refundSummaryTitle,
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(strings.cancellation.advanceDakshinaPaid, color = Color.Gray)
-                        Text("₹${quote.advancePaid.toInt()}", fontWeight = FontWeight.SemiBold)
-                    }
-                    if (quote.cancellationFee > 0) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(strings.cancellation.cancellationFee, color = MaterialTheme.colorScheme.error)
-                            Text("- ₹${quote.cancellationFee.toInt()}", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold)
-                        }
-                    }
-                    Divider(modifier = Modifier.padding(vertical = 8.dp))
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(strings.cancellation.totalRefundAmount, fontWeight = FontWeight.Bold)
-                        Text("₹${quote.refundAmount.toInt()}", fontWeight = FontWeight.Bold, color = Color(0xFF059669), style = MaterialTheme.typography.titleMedium)
-                    }
-                }
-            }
-
+            // The free pilot does not collect online payments. The backend quote is
+            // calculated from the booking estimate, so it is not evidence of a payment.
             Spacer(modifier = Modifier.height(16.dp))
 
             // Action Buttons
             Button(
                 onClick = { onConfirmCancel(selectedReason) },
-                modifier = Modifier.fillMaxWidth().height(50.dp),
+                enabled = !isSubmitting,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Text(
-                    text = strings.cancellation.confirmCancelCTA,
+                    text = if (isSubmitting) strings.common.loadingState else strings.cancellation.confirmCancelCTA,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -192,6 +141,7 @@ fun SwiggyCancellationModal(
 
             TextButton(
                 onClick = onDismiss,
+                enabled = !isSubmitting,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(strings.common.cancelAction)

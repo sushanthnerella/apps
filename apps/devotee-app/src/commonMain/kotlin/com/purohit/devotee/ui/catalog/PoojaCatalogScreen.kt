@@ -14,6 +14,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -23,18 +24,26 @@ import com.purohit.contracts.i18n.LocalizationManager
 import com.purohit.contracts.i18n.StringContract
 import com.purohit.devotee.network.PoojaCatalogItem
 import com.purohit.devotee.network.PurohitApiClient
+import com.purohit.devotee.ui.resilience.ErrorScreen
+import com.purohit.devotee.ui.resilience.NoInternetScreen
+import com.purohit.devotee.ui.resilience.VedicLoadingScreen
 import kotlinx.coroutines.launch
+
+// Discovery matches canonical service names, while the user sees translated titles.
+internal fun discoveryServiceNames(items: Collection<PoojaCatalogItem>): String =
+    items.joinToString(" + ") { it.title_en.ifBlank { it.title } }
 
 @Composable
 fun PoojaCatalogScreen(
     currentLanguage: AppLanguage = AppLanguage.ENGLISH,
     strings: StringContract = LocalizationManager.getStrings(AppLanguage.ENGLISH),
-    onSelectPoojaForDispatch: (poojaTitle: String, poojaId: String, totalAmount: Double) -> Unit
+    onSelectPoojaForDispatch: (poojaTitle: String, poojaId: String, totalAmount: Double, discoveryNames: String) -> Unit
 ) {
     var searchQuery by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf(strings.catalog.categoryAll) }
     var poojaList by remember { mutableStateOf<List<PoojaCatalogItem>>(emptyList()) }
     var isLoading by remember { mutableStateOf(false) }
+    var catalogError by remember { mutableStateOf<String?>(null) }
 
     val isTelugu = currentLanguage == AppLanguage.TELUGU
     val isHindi = currentLanguage == AppLanguage.HINDI
@@ -64,35 +73,10 @@ fun PoojaCatalogScreen(
             isLoading = false
             res.onSuccess { items ->
                 poojaList = items
-            }.onFailure {
-                poojaList = if (isTelugu) {
-                    listOf(
-                        PoojaCatalogItem("1", "గృహప్రవేశం (నూతన గృహ ప్రవేశ మహోత్సవం)", category = "శుభకార్యాలు", base_price = 5116.0, samagri_kit_price = 2500.0, duration_minutes = 180, is_online_eligible = false, icon = "🏡", description = "వాస్తు శాంతి, నవగ్రహ మరియు గణపతి హోమములతో కూడిన క్రతువు"),
-                        PoojaCatalogItem("2", "శ్రీ సత్యనారాయణ స్వామి వ్రతం", category = "సౌభాగ్యం", base_price = 2516.0, samagri_kit_price = 1200.0, duration_minutes = 120, is_online_eligible = true, icon = "✨", description = "పంచాధ్యాయ వ్రత కథ, సత్యదేవుని పూజ"),
-                        PoojaCatalogItem("3", "మహా గణపతి హోమం / యాగానుష్ఠానం", category = "విఘ్న నివారణ", base_price = 3116.0, samagri_kit_price = 1800.0, duration_minutes = 90, is_online_eligible = true, icon = "🕉️", description = "సర్వ విఘ్న నివారణకు చేయు పవిత్ర హోమము"),
-                        PoojaCatalogItem("4", "నామకరణం & ఆయుష్య హోమం", category = "సంస్కారాలు", base_price = 2116.0, samagri_kit_price = 1100.0, duration_minutes = 90, is_online_eligible = true, icon = "👶", description = "శిశువునకు జన్మనక్షత్ర నామకరణం & దీర్ఘాయుష్షు"),
-                        PoojaCatalogItem("5", "మహా మృత్యుంజయ హోమం / ఆయుర్వృద్ధి శాంతి", category = "ఆరోగ్యం", base_price = 4116.0, samagri_kit_price = 2100.0, duration_minutes = 120, is_online_eligible = true, icon = "🔱", description = "సంపూర్ణ ఆరోగ్యానికి చేయు మహత్తర హోమము"),
-                        PoojaCatalogItem("6", "నవగ్రహ శాంతి హోమం & దోష నివారణ", category = "దోష నివారణలు", base_price = 3516.0, samagri_kit_price = 1600.0, duration_minutes = 100, is_online_eligible = true, icon = "☀️", description = "నవగ్రహ దేవతా అనుగ్రహం & జాతక దోష నివారణ")
-                    )
-                } else if (isHindi) {
-                    listOf(
-                        PoojaCatalogItem("1", "गृहप्रवेश पूजा एवं वास्तु शांति हवन", category = "मांगलिक", base_price = 5116.0, samagri_kit_price = 2500.0, duration_minutes = 180, is_online_eligible = false, icon = "🏡", description = "वास्तु शांति एवं नवग्रह हवन सहित गृहप्रवेश पूजन"),
-                        PoojaCatalogItem("2", "श्री सत्यनारायण स्वामी व्रत कथा", category = "समृद्धि", base_price = 2516.0, samagri_kit_price = 1200.0, duration_minutes = 120, is_online_eligible = true, icon = "✨", description = "पंच-अध्याय कथा एवं सपाद महाप्रसाद भोग"),
-                        PoojaCatalogItem("3", "महा गणपति हवन / विघ्नहर्ता अनुष्ठान", category = "विघ्नहर्ता", base_price = 3116.0, samagri_kit_price = 1800.0, duration_minutes = 90, is_online_eligible = true, icon = "🕉️", description = "सर्व विघ्न बाधा निवारण हेतु वैदिक महाहवन"),
-                        PoojaCatalogItem("4", "नामकरण संस्कार एवं आयुष्य हवन", category = "संस्कार", base_price = 2116.0, samagri_kit_price = 1100.0, duration_minutes = 90, is_online_eligible = true, icon = "👶", description = "शिशु का नामकरण एवं आयुष्य होम"),
-                        PoojaCatalogItem("5", "महा मृत्युंजय हवन / आरोग्य शांति", category = "स्वास्थ्य", base_price = 4116.0, samagri_kit_price = 2100.0, duration_minutes = 120, is_online_eligible = true, icon = "🔱", description = "आरोग्य लाभ एवं अकाल मृत्यु निवारक महाहवन"),
-                        PoojaCatalogItem("6", "नवग्रह शांति हवन एवं दोष निवारण", category = "दोष निवारण", base_price = 3516.0, samagri_kit_price = 1600.0, duration_minutes = 100, is_online_eligible = true, icon = "☀️", description = "नवग्रहों की प्रसन्नता एवं ग्रह शांति हवन")
-                    )
-                } else {
-                    listOf(
-                        PoojaCatalogItem("1", "Gruhapravesam (House Warming)", category = "Major Occasion", base_price = 5116.0, samagri_kit_price = 2500.0, duration_minutes = 180, is_online_eligible = false, icon = "🏡", description = "House warming ritual"),
-                        PoojaCatalogItem("2", "Sri Satyanarayana Swamy Vratam", category = "Prosperity", base_price = 2516.0, samagri_kit_price = 1200.0, duration_minutes = 120, is_online_eligible = true, icon = "✨", description = "Prosperity vratam"),
-                        PoojaCatalogItem("3", "Maha Ganapathi Homa / Yagam", category = "Obstacle Removal", base_price = 3116.0, samagri_kit_price = 1800.0, duration_minutes = 90, is_online_eligible = true, icon = "🕉️", description = "Obstacle removal yagam"),
-                        PoojaCatalogItem("4", "Namakaranam & Ayushya Homa", category = "Sanskaras", base_price = 2116.0, samagri_kit_price = 1100.0, duration_minutes = 90, is_online_eligible = true, icon = "👶", description = "Baby naming ceremony"),
-                        PoojaCatalogItem("5", "Mrityunjaya Homa / Shanti", category = "Health", base_price = 4116.0, samagri_kit_price = 2100.0, duration_minutes = 120, is_online_eligible = true, icon = "🔱", description = "Health & healing homa"),
-                        PoojaCatalogItem("6", "Navagraha Shanti Homa", category = "Astrological Remedies", base_price = 3516.0, samagri_kit_price = 1600.0, duration_minutes = 100, is_online_eligible = true, icon = "☀️", description = "Planetary dosha shanti")
-                    )
-                }
+                catalogError = null
+            }.onFailure { err ->
+                catalogError = err.message
+                poojaList = emptyList()
             }
         }
     }
@@ -109,7 +93,11 @@ fun PoojaCatalogScreen(
     val combinedDurationMinutes = selectedPoojas.values.sumOf { it.duration_minutes }
     val totalEscrowAmount = totalBasePrice + totalSamagriPrice
 
+    val compactSelection = LocalDensity.current.fontScale >= 1.6f && selectedPoojas.isNotEmpty()
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        // Leave room for the booking action at large system text sizes. Clearing
+        // the selection restores search and category controls.
+        if (!compactSelection) {
         // Header
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -179,14 +167,38 @@ fun PoojaCatalogScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
+        }
+
         // 3. Grid View (2 Columns)
-        if (isLoading) {
+        if (isLoading && poojaList.isEmpty()) {
+            VedicLoadingScreen(
+                title = strings.catalog.catalogTitle,
+                subtitle = "Fetching consecrated ritual packages & Dakshina...",
+                modifier = Modifier.weight(1f)
+            )
+        } else if (poojaList.isEmpty() && catalogError != null) {
+            if (catalogError!!.contains("connect", ignoreCase = true) || catalogError!!.contains("network", ignoreCase = true) || catalogError!!.contains("timeout", ignoreCase = true)) {
+                NoInternetScreen(
+                    strings = strings,
+                    onRetry = { loadCatalog() },
+                    serverUrl = PurohitApiClient.baseUrl,
+                    modifier = Modifier.weight(1f)
+                )
+            } else {
+                ErrorScreen(
+                    errorMessage = catalogError!!,
+                    strings = strings,
+                    onRetry = { loadCatalog() },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        } else if (poojaList.isEmpty()) {
             Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
+                Text(if (isTelugu) "పూజలు కనబడలేదు" else if (isHindi) "कोई पूजा नहीं मिली" else "No poojas found", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } else {
             LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
+                columns = GridCells.Adaptive(minSize = 170.dp),
                 modifier = Modifier.weight(1f),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -259,7 +271,7 @@ fun PoojaCatalogScreen(
                             Text(
                                 text = pkg.category,
                                 style = MaterialTheme.typography.labelSmall,
-                                color = Color.Gray
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
 
                             Spacer(modifier = Modifier.height(6.dp))
@@ -284,7 +296,7 @@ fun PoojaCatalogScreen(
                                         onCheckedChange = { checked ->
                                             samagriSelections[pkg.id] = checked
                                         },
-                                        modifier = Modifier.size(24.dp)
+                                        modifier = Modifier.size(48.dp)
                                     )
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text(
@@ -300,7 +312,7 @@ fun PoojaCatalogScreen(
                             // View Items (Household & Samagri) Button
                             OutlinedButton(
                                 onClick = { viewingItemsPooja = pkg },
-                                modifier = Modifier.fillMaxWidth().height(30.dp),
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                                 contentPadding = PaddingValues(0.dp),
                                 shape = RoundedCornerShape(8.dp)
                             ) {
@@ -358,7 +370,8 @@ fun PoojaCatalogScreen(
                             text = if (isTelugu) "⚡ సంకల్ప బండిల్: ${selectedPoojas.size} పూజలు ఎంపికయ్యాయి" else if (isHindi) "⚡ अनुष्ठान बंडल: ${selectedPoojas.size} पूजा चयनित" else "⚡ Bundle: ${selectedPoojas.size} Pooja(s) Selected",
                             fontWeight = FontWeight.Bold,
                             style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.primary
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.weight(1f)
                         )
                         TextButton(
                             onClick = {
@@ -372,19 +385,18 @@ fun PoojaCatalogScreen(
                     }
 
                     // Combined breakdown
-                    Row(
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Column {
                             Text(
                                 text = "${strings.catalog.durationLabel}: ~${combinedDurationMinutes} ${strings.catalog.durationMinutes} | ${if (isTelugu) "సామాగ్రి" else if (isHindi) "सामग्री" else "Samagri"}: ₹${totalSamagriPrice.toInt()}",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = Color.Gray
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Text(
-                                text = "${if (isTelugu) "మొత్తం ఎస్క్రో దక్షిణ" else if (isHindi) "कुल एस्क्रो दक्षिणा" else "Total Escrow"}: ₹${totalEscrowAmount.toInt()}",
+                                text = "${if (isTelugu) "అంచనా మొత్తం" else if (isHindi) "अनुमानित राशि" else "Estimated total"}: ₹${totalEscrowAmount.toInt()}",
                                 fontWeight = FontWeight.Bold,
                                 style = MaterialTheme.typography.titleLarge,
                                 color = MaterialTheme.colorScheme.primary
@@ -395,8 +407,9 @@ fun PoojaCatalogScreen(
                             onClick = {
                                 val combinedTitle = selectedPoojas.values.joinToString(" + ") { it.title }
                                 val combinedIds = selectedPoojas.values.joinToString(",") { it.id }
-                                onSelectPoojaForDispatch(combinedTitle, combinedIds, totalEscrowAmount)
+                                onSelectPoojaForDispatch(combinedTitle, combinedIds, totalEscrowAmount, discoveryServiceNames(selectedPoojas.values))
                             },
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                             shape = RoundedCornerShape(10.dp)
                         ) {

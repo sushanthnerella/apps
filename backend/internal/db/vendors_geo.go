@@ -22,7 +22,7 @@ func (s *Storage) GetNearbyVendors(lat, lon, radiusMeters float64) ([]models.Ven
 	}
 	defer rows.Close()
 
-	var vendors []models.Vendor
+	vendors := []models.Vendor{}
 	for rows.Next() {
 		var v models.Vendor
 		if err := rows.Scan(

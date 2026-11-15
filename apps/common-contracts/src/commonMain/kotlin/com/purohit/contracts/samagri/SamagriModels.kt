@@ -10,7 +10,9 @@ data class SamagriItem(
     val category: String, // 'Fresh Items', 'Dry Essentials', 'Havan Samagri', 'Utensils'
     val quantity: String,
     val isMandatory: Boolean = true,
-    val estimatedPrice: Double = 0.0
+    val estimatedPrice: Double = 0.0,
+    val estimatedPriceMinor: Long = 0L,
+    val currency: String = "INR"
 )
 
 @Serializable

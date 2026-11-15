@@ -29,4 +29,25 @@ interface AuthStrings {
     val registerButton: String
     val alreadyHaveAccount: String
     val newToPujaVaahini: String
+    val forgotPasswordButton: String
+    val resetPasswordTitle: String
+    val sendRecoveryCode: String
+    val recoveryCodeLabel: String
+    val newPasswordLabel: String
+    val confirmPasswordLabel: String
+    val passwordsDoNotMatch: String
+    val resendCode: String
+    val resendCooldown: String
+    val passwordResetSuccess: String
+    val smsUnavailableNotice: String
+    val forgotPasswordEmailPrompt: String
+    val emailLabel: String
+    val emailPlaceholder: String
+    val invalidEmail: String
+    val sendResetLink: String
+    val resetLinkSentSuccess: String
+    val emailDeliveryFailed: String
+    val emailUnavailableNotice: String
+    val resendResetLink: String
+    val backToLogin: String
 }

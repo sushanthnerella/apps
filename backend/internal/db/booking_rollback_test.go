@@ -144,6 +144,7 @@ func TestCreateBookingAtomicRollbackOnMaterialError(t *testing.T) {
 		PriestID:          "priest-1",
 		PoojaID:           "pooja-1",
 		BookingType:       "DIRECT",
+		EventAddress:      "Plot 10, Banjara Hills, Hyderabad",
 		IncludeSamagriKit: true,
 		TotalAmountMinor:  250000,
 	}
@@ -168,5 +169,29 @@ func TestCreateBookingAtomicRollbackOnMaterialError(t *testing.T) {
 	}
 	if driverInstance.commits != 0 {
 		t.Errorf("expected 0 commits on failure, got: %d", driverInstance.commits)
+	}
+}
+
+func TestCreateBookingRejectsEmptyEventAddress(t *testing.T) {
+	driverInstance := &mockBookingDriver{}
+	driverName := fmt.Sprintf("mock_booking_driver_%d", time.Now().UnixNano())
+	sql.Register(driverName, driverInstance)
+
+	sqlDB, err := sql.Open(driverName, "")
+	if err != nil {
+		t.Fatalf("failed opening mock db: %v", err)
+	}
+	defer sqlDB.Close()
+
+	storage := &Storage{DB: sqlDB}
+
+	_, _, err = storage.CreateBooking(models.BookingCreateRequest{
+		UserID:       "devotee-1",
+		PriestID:     "priest-1",
+		PoojaID:      "pooja-1",
+		EventAddress: "   ",
+	})
+	if err == nil || !strings.Contains(err.Error(), "event address is required") {
+		t.Fatalf("expected 'event address is required' error, got: %v", err)
 	}
 }

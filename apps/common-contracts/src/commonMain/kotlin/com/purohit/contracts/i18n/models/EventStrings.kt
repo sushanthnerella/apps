@@ -1,0 +1,91 @@
+package com.purohit.contracts.i18n.models
+
+/** Strings for event mode (Pushkaralu). Templates use {day} and {total} placeholders. */
+interface EventStrings {
+    val tabEvent: String
+    val liveDayTemplate: String
+    val pausedBadge: String
+    val bannerDescription: String
+    val bookPriestAtGhat: String
+    val bookingsPaused: String
+    val myEventBookings: String
+    val regularServices: String
+    val chooseGhatTitle: String
+    val searchGhatPlaceholder: String
+    val sortByNearest: String
+    val sortByName: String
+    val locationOptional: String
+    val noGhatsMatch: String
+    val noGhatsConfigured: String
+    val ghatBookingOpensSoon: String
+    val eventEndedNotice: String
+
+    // Devotee: priests at ghat, request, booking code. Templates: {count} {min} {price} {time}
+    val availableNowTemplate: String
+    val noPriestsAvailable: String
+    val updatedAgoTemplate: String
+    val locationDelayedTemplate: String
+    val verifiedBadge: String
+    val fromPriceTemplate: String
+    val requestAction: String
+    val ritualLabel: String
+    val whenLabel: String
+    val whenNow: String
+    val whenSchedule: String
+    val familySizeLabel: String
+    val dakshinaLabel: String
+    val payAtGhatNotice: String
+    val requestExpiryNotice: String
+    val sendRequest: String
+    val waitingForPriest: String
+    val expiresInTemplate: String
+    val requestExpired: String
+    val priestDeclined: String
+    val bookingConfirmed: String
+    val bookingCodeTitle: String
+    val bookingCodeHint: String
+    val meetAt: String
+    val stepRequested: String
+    val stepAccepted: String
+    val stepStarted: String
+    val stepCompleted: String
+    val chatAction: String
+    val cancelRequest: String
+    val cancelConfirm: String
+    val ritualCompleted: String
+    val errorPriestUnavailable: String
+    val errorInvalidSchedule: String
+    val retryAction: String
+
+    // Priest: application, prices, card, duty. Template: {event}
+    val applyTitleTemplate: String
+    val statusNotApplied: String
+    val statusSubmitted: String
+    val statusChangesRequested: String
+    val statusApproved: String
+    val statusRejected: String
+    val statusSuspended: String
+    val applyAction: String
+    val resubmitAction: String
+    val reviewerNoteLabel: String
+    val yourPricesTitle: String
+    val priceInRupees: String
+    val savePrices: String
+    val pricesSaved: String
+    val cardTitle: String
+    val issuedByPoojaVahini: String
+    val notGovtNotice: String
+    val cardIdLabel: String
+    val cardStatusLabel: String
+    val cardPendingNotice: String
+    val dutyTitle: String
+    val startDuty: String
+    val endDuty: String
+    val dutyAvailable: String
+    val dutyPerforming: String
+    val dutyBreak: String
+    val endDutyWarning: String
+    val dutyNeedsApproval: String
+    val enterBookingCode: String
+    val priestBusyError: String
+}

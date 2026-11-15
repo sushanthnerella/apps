@@ -11,6 +11,12 @@ data class CancellationQuote(
     val travelFee: Double,
     val priestCompensation: Double,
     val refundAmount: Double,
+    val advancePaidMinor: Long = 0L,
+    val cancellationFeeMinor: Long = 0L,
+    val travelFeeMinor: Long = 0L,
+    val priestCompensationMinor: Long = 0L,
+    val refundAmountMinor: Long = 0L,
+    val currency: String = "INR",
     val isFreeCancellation: Boolean,
     val policyNotice: String
 )
@@ -30,5 +36,8 @@ data class CancelBookingResponse(
     val newStatus: String = "CANCELLED",
     val refundAmount: Double,
     val priestCompensation: Double,
+    val refundAmountMinor: Long = 0L,
+    val priestCompensationMinor: Long = 0L,
+    val currency: String = "INR",
     val message: String
 )

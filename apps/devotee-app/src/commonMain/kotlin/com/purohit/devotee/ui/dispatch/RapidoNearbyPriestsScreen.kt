@@ -1,6 +1,7 @@
 package com.purohit.devotee.ui.dispatch
 
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -16,61 +17,136 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.purohit.devotee.LocalAppLanguage
+import com.purohit.contracts.i18n.AppLanguage
+import com.purohit.contracts.i18n.LocalizationManager
+import com.purohit.contracts.i18n.StringContract
+import com.purohit.contracts.idempotency.IdempotencyKeyGenerator
+import com.purohit.contracts.resilience.JitteredBackoff
+import com.purohit.devotee.location.rememberLocationAccess
+import com.purohit.devotee.network.PriestSlotPayload
 import com.purohit.devotee.network.NearbyPriestItem
 import com.purohit.devotee.network.PurohitApiClient
+import com.purohit.devotee.ui.resilience.ErrorScreen
+import com.purohit.devotee.ui.resilience.NoInternetScreen
+import com.purohit.devotee.ui.resilience.VedicLoadingScreen
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.datetime.Clock
+import kotlinx.datetime.Instant
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.atStartOfDayIn
+import kotlinx.datetime.toLocalDateTime
 
 @Composable
 fun RapidoNearbyPriestsScreen(
     poojaTitle: String,
+    discoveryNames: String,
     totalAmount: Double,
     poojaId: String = "5dccda01-fcb9-4bc2-9ef9-6015419533bc",
+    strings: StringContract = LocalizationManager.getStrings(AppLanguage.ENGLISH),
     onPriestBooked: (priest: NearbyPriestItem, otp: String, bookingId: String, chatRoomId: String) -> Unit
 ) {
+    val language = LocalAppLanguage.current
+    fun tr(en: String, te: String, hi: String) = when (language) { AppLanguage.TELUGU -> te; AppLanguage.HINDI -> hi; else -> en }
     var nearbyPriests by remember { mutableStateOf<List<NearbyPriestItem>>(emptyList()) }
+    var selectedPriest by remember { mutableStateOf<NearbyPriestItem?>(null) }
+    var priestToConfirm by remember { mutableStateOf<NearbyPriestItem?>(null) }
     var isLoading by remember { mutableStateOf(true) }
     var bookedPriest by remember { mutableStateOf<NearbyPriestItem?>(null) }
-    var completionOtp by remember { mutableStateOf("4921") }
-    var activeBookingId by remember { mutableStateOf("f312db8f-1d71-4cab-b5ba-77fbead70c71") }
-    var activeChatRoomId by remember { mutableStateOf("d66283f3-1eb0-40b3-afc0-c37d355b90f8") }
+    var completionOtp by remember { mutableStateOf("") }
+    var activeBookingId by remember { mutableStateOf("") }
+    var activeChatRoomId by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     val coroutineScope = rememberCoroutineScope()
+    val locationAccess = rememberLocationAccess()
 
     // 1. Date & Muhurtham Selection States
-    var selectedDate by remember { mutableStateOf("Today (Nov 03)") }
-    var selectedSlot by remember { mutableStateOf("08:30 AM - 10:30 AM") }
-    var devoteeGotram by remember { mutableStateOf(PurohitApiClient.currentProfile?.gotram ?: "Kashyapa") }
-    var devoteeNakshatram by remember { mutableStateOf(PurohitApiClient.currentProfile?.nakshatram ?: "Rohini") }
-    var devoteeRashi by remember { mutableStateOf(PurohitApiClient.currentProfile?.rashi ?: "Vrishabha") }
+    var eventAddress by remember { mutableStateOf("") }
+    var selectedDate by remember { mutableStateOf("") }
+    var selectedSlot by remember { mutableStateOf("") }
+    var availableSlots by remember { mutableStateOf<List<PriestSlotPayload>>(emptyList()) }
+    var chosenSlot by remember { mutableStateOf<PriestSlotPayload?>(null) }
+    var slotMessage by remember { mutableStateOf(tr("Choose a priest and select a date.", "పురోహితుడిని, తేదీని ఎంచుకోండి.", "पुरोहित और तारीख चुनें।")) }
+    LaunchedEffect(selectedPriest?.id, selectedDate) {
+        chosenSlot = null
+        selectedSlot = ""
+        availableSlots = emptyList()
+        val priest = selectedPriest
+        if (priest != null && Regex("\\d{4}-\\d{2}-\\d{2}").matches(selectedDate)) {
+            slotMessage = tr("Loading availability…", "అందుబాటు పొందుతున్నాము…", "उपलब्धता लोड हो रही है…")
+            PurohitApiClient.fetchPriestSlots(priest.id, selectedDate).onSuccess { slots ->
+                availableSlots = slots.filter { !it.is_booked && !it.is_held }
+                slotMessage = if (availableSlots.isEmpty()) tr("No available slots for this date.", "ఈ తేదీన అందుబాటు సమయాలు లేవు.", "इस तारीख पर कोई समय उपलब्ध नहीं है।") else tr("Select an available time.", "అందుబాటులో ఉన్న సమయాన్ని ఎంచుకోండి.", "उपलब्ध समय चुनें।")
+            }.onFailure { slotMessage = tr("Could not load availability. Try again.", "అందుబాటు పొందలేకపోయాము. మళ్లీ ప్రయత్నించండి.", "उपलब्धता नहीं मिली। फिर प्रयास करें।") }
+        }
+    }
+    var devoteeGotram by remember(PurohitApiClient.currentProfile) {
+        mutableStateOf(PurohitApiClient.currentProfile?.gotram.orEmpty())
+    }
+    var devoteeNakshatram by remember(PurohitApiClient.currentProfile) {
+        mutableStateOf(PurohitApiClient.currentProfile?.nakshatram.orEmpty())
+    }
+    var devoteeRashi by remember(PurohitApiClient.currentProfile) {
+        mutableStateOf(PurohitApiClient.currentProfile?.rashi.orEmpty())
+    }
 
     // 2. Priest Acceptance Waiting States
     var isAwaitingPriestAcceptance by remember { mutableStateOf(false) }
-    var acceptanceCountdown by remember { mutableStateOf(45) }
     var isRequestDispatched by remember { mutableStateOf(false) }
+    var slotHoldKey by remember { mutableStateOf(IdempotencyKeyGenerator.generate()) }
+    var bookingIntentKey by remember { mutableStateOf(IdempotencyKeyGenerator.generate()) }
+    var cancelIntentKey by remember { mutableStateOf(IdempotencyKeyGenerator.generate()) }
 
-    // Pulsing transition for waiting radar
-    val infiniteTransition = rememberInfiniteTransition(label = "acceptance_pulse")
-    val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 0.95f,
-        targetValue = 1.05f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(800, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pulse_scale"
-    )
+    fun sendBookingRequest(targetPriest: NearbyPriestItem) {
+        val slot = chosenSlot ?: return
+        bookedPriest = targetPriest
+        isAwaitingPriestAcceptance = true
+        errorMessage = null
+        coroutineScope.launch {
+            val held = PurohitApiClient.holdPriestSlot(slot.id, idempotencyKey = slotHoldKey)
+            if (held.isFailure) { errorMessage = tr("This slot is no longer available. Choose another.", "ఈ సమయం అందుబాటులో లేదు. మరొకటి ఎంచుకోండి.", "यह समय उपलब्ध नहीं है। दूसरा चुनें।"); isAwaitingPriestAcceptance = false; return@launch }
+            val res = PurohitApiClient.createBooking(
+                priestId = targetPriest.id,
+                poojaId = poojaId,
+                totalAmount = totalAmount,
+                scheduledDate = selectedDate,
+                slotTime = selectedSlot,
+                slotId = slot.id,
+                eventAddress = eventAddress.trim(),
+                gotram = devoteeGotram,
+                nakshatram = devoteeNakshatram,
+                rashi = devoteeRashi,
+                purpose = "",
+                idempotencyKey = bookingIntentKey
+            )
+            val booking = res.getOrNull()
+            if (booking != null) {
+                slotHoldKey = IdempotencyKeyGenerator.generate()
+                bookingIntentKey = IdempotencyKeyGenerator.generate()
+                completionOtp = booking.completion_otp
+                activeBookingId = booking.booking_id
+
+                val roomRes = PurohitApiClient.getChatRoomByBooking(booking.booking_id)
+                activeChatRoomId = roomRes.getOrNull()?.room_id ?: ""
+            } else {
+                errorMessage = tr("Could not send the booking request. Please try again.", "బుకింగ్ అభ్యర్థన పంపలేకపోయాము. మళ్లీ ప్రయత్నించండి.", "बुकिंग अनुरोध नहीं भेजा गया। फिर प्रयास करें।")
+                isAwaitingPriestAcceptance = false
+            }
+        }
+    }
 
     // Poll for Priest Acceptance
     LaunchedEffect(isAwaitingPriestAcceptance, activeBookingId) {
         if (isAwaitingPriestAcceptance && activeBookingId.isNotBlank()) {
-            acceptanceCountdown = 45
-            while (acceptanceCountdown > 0 && isAwaitingPriestAcceptance) {
-                delay(2000L)
-                acceptanceCountdown -= 2
+            val backoff = JitteredBackoff(baseDelayMs = 5000L, maxDelayMs = 30000L)
+            while (isAwaitingPriestAcceptance) {
+                backoff.awaitNext()
 
                 val detailRes = PurohitApiClient.fetchBookingDetails(activeBookingId)
                 detailRes.onSuccess { details ->
+                    backoff.recordSuccess()
                     if (details.status == "ACCEPTED" || details.status == "IN_TRANSIT" || details.status == "ARRIVED" || details.status == "POOJA_STARTED") {
                         isAwaitingPriestAcceptance = false
                         isRequestDispatched = true
@@ -79,386 +155,313 @@ fun RapidoNearbyPriestsScreen(
                         }
                     } else if (details.status == "CANCELLED" || details.status == "REJECTED") {
                         isAwaitingPriestAcceptance = false
-                        errorMessage = "Purohit passed this slot. Please select another nearby purohit or time window."
+                        errorMessage = tr("The priest declined. Choose another priest or time.", "పురోహితుడు నిరాకరించారు. మరొక పురోహితుడు లేదా సమయం ఎంచుకోండి.", "पुरोहित ने मना किया। दूसरा पुरोहित या समय चुनें।")
                     }
+                }.onFailure {
+                    backoff.recordError()
+                    errorMessage = tr("Could not check status. Retrying…", "స్థితి తనిఖీ కాలేదు. మళ్లీ ప్రయత్నిస్తున్నాము…", "स्थिति नहीं मिली। फिर प्रयास हो रहा है…")
                 }
+            }
+        }
+    }
+
+    fun loadNearby() {
+        isLoading = true
+        errorMessage = null
+        nearbyPriests = emptyList()
+        selectedPriest = null
+        locationAccess.request { location ->
+            location.onSuccess { coordinates ->
+                coroutineScope.launch {
+                    val res = PurohitApiClient.fetchNearbyPriests(coordinates.latitude, coordinates.longitude, discoveryNames)
+                    isLoading = false
+                    res.onSuccess { list ->
+                        nearbyPriests = list
+                        selectedPriest = list.firstOrNull()
+                        errorMessage = null
+                    }.onFailure { errorMessage = it.message ?: "Could not load nearby priests." }
+                }
+            }.onFailure {
+                isLoading = false
+                errorMessage = it.message ?: "Could not get your location. Please try again."
             }
         }
     }
 
     LaunchedEffect(poojaTitle) {
-        isLoading = true
-        val res = PurohitApiClient.fetchNearbyPriests(service = poojaTitle)
-        isLoading = false
-        res.onSuccess { list ->
-            nearbyPriests = list
-            errorMessage = null
-        }.onFailure { err ->
-            errorMessage = "Live DB connection error: ${err.message}. Showing verified local purohits."
-            nearbyPriests = listOf(
-                NearbyPriestItem(
-                    id = "6e7d277c-4ee2-469f-96ac-331517389762",
-                    full_name = "Brahmasri Sushanth Sastry",
-                    phone = "9876543210",
-                    sampradaya = "Smartha",
-                    veda_shakha = "Rigveda Shakha",
-                    rating_avg = 5.0,
-                    total_completed_poojas = 48,
-                    repeat_booking_count = 14,
-                    distance_meters = 216.0,
-                    distance_km = 0.2,
-                    eta_minutes = 4,
-                    vehicle_type = "Two Wheeler",
-                    services_offered = listOf("Gruhapravesam", "Sri Satyanarayana Swamy Vratam", "Maha Ganapathi Homa"),
-                    score = 0.98
-                ),
-                NearbyPriestItem(
-                    id = "a6e7d214-6b30-4f71-a0b1-6e4a55f73941",
-                    full_name = "Brahmasri Venkata Sharma Garu",
-                    phone = "+91 98765 43210",
-                    sampradaya = "Smartha",
-                    veda_shakha = "Rigveda Shakha",
-                    rating_avg = 4.95,
-                    total_completed_poojas = 184,
-                    repeat_booking_count = 42,
-                    distance_meters = 800.0,
-                    distance_km = 0.8,
-                    eta_minutes = 6,
-                    vehicle_type = "Two Wheeler",
-                    services_offered = listOf("Gruhapravesam", "Sri Satyanarayana Swamy Vratam"),
-                    score = 0.94
-                )
-            )
-        }
+        loadNearby()
     }
 
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        // Devotee GPS Location Pill & Carrier-Lock Accuracy
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-            shape = RoundedCornerShape(14.dp)
-        ) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = Color(0xFF15803D),
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text("📍", style = MaterialTheme.typography.bodyMedium)
-                        }
-                    }
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Devotee Residence (Ritual Venue)",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.Gray
-                        )
-                        Text(
-                            text = "Plot 42, Sri Rama Nagar, Madhav Nagar, Hyderabad",
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.titleSmall
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = "🛰️ GNSS RTK: ±3.8m Accuracy (Dual L1+L5 Locked)",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFF15803D),
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = "🟢 Online Priests: ${nearbyPriests.size}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        // IF AWAITING PRIEST ACCEPTANCE (Lifecycle State: REQUESTED -> Waiting for Priest)
-        if (isAwaitingPriestAcceptance) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFFEF3C7)),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(18.dp).fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(56.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text("⏳", style = MaterialTheme.typography.titleLarge)
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    Text(
-                        text = "🔔 DISPATCH REQUEST SENT TO PUROHIT!",
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Text(
-                        text = "Waiting for ${bookedPriest?.full_name} to accept your muhurtham slot...",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFF78350F)
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Surface(
-                        color = Color.White,
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text("📅 Date: $selectedDate • ⏰ Slot: $selectedSlot", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text("✨ Sankalpam: $devoteeGotram Gotram • $devoteeNakshatram ($devoteeRashi)", style = MaterialTheme.typography.bodySmall, color = Color.DarkGray)
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text("Dakshina: ₹${totalAmount.toInt()} (Held in Escrow)", style = MaterialTheme.typography.bodySmall, color = Color(0xFF15803D), fontWeight = FontWeight.Bold)
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    Text(
-                        text = "⏱️ Purohit Acceptance Window: ${acceptanceCountdown}s",
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFFB45309),
-                        style = MaterialTheme.typography.labelMedium
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    LinearProgressIndicator(
-                        progress = { acceptanceCountdown / 45f },
-                        modifier = Modifier.fillMaxWidth(),
-                        color = MaterialTheme.colorScheme.primary
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    OutlinedButton(
-                        onClick = { isAwaitingPriestAcceptance = false },
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Red),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text("Cancel Request")
-                    }
-                }
-            }
-        } else if (bookedPriest != null && isRequestDispatched) {
-            // Priest has accepted booking confirmation card
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFDCFCE7))
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("✅ PUROHIT ACCEPTED & DISPATCHED!", fontWeight = FontWeight.Bold, color = Color(0xFF15803D), style = MaterialTheme.typography.titleMedium)
-                    Text("${bookedPriest?.full_name} accepted your request for $selectedDate.")
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Slot: $selectedSlot")
-                    Text("Phone: ${bookedPriest?.phone}")
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Surface(
-                        color = Color.White,
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text("Completion OTP: $completionOtp", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                            Text("Provide this code to the priest only upon completion to release payment from escrow.", style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Button(
-                        onClick = {
-                            bookedPriest?.let { onPriestBooked(it, completionOtp, activeBookingId, activeChatRoomId) }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                    ) {
-                        Text("📍 Open Live Priest GPS Tracking & Chat")
-                    }
-                }
+    Box(modifier = Modifier.fillMaxSize()) {
+        if (isLoading && nearbyPriests.isEmpty()) {
+            VedicLoadingScreen(
+                title = tr("Finding priests", "పురోహితులను వెతుకుతున్నాము", "पुरोहित खोज रहे हैं"),
+                subtitle = tr("Finding priests near your location…", "మీ దగ్గర పురోహితులను వెతుకుతున్నాము…", "आपके पास पुरोहित खोज रहे हैं…")
+            )
+        } else if (nearbyPriests.isEmpty() && errorMessage != null) {
+            if (errorMessage!!.contains("connect", ignoreCase = true) || errorMessage!!.contains("network", ignoreCase = true)) {
+                NoInternetScreen(
+                    strings = strings,
+                    onRetry = { loadNearby() },
+                    serverUrl = PurohitApiClient.baseUrl
+                )
+            } else {
+                ErrorScreen(
+                    errorMessage = errorMessage!!,
+                    strings = strings,
+                    onRetry = { loadNearby() }
+                )
             }
         } else {
-            // STEP 1: DATE & MUHURTHAM SLOT SELECTION
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
+            LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 100.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item { OutlinedButton(onClick = { loadNearby() }, enabled = !isLoading) { Text(tr("Refresh my location", "నా స్థానాన్ని నవీకరించండి", "मेरा स्थान अपडेट करें")) } }
+            // Awaiting Priest Acceptance
+            if (isAwaitingPriestAcceptance) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(18.dp).fillMaxWidth(),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(56.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text("⏳", style = MaterialTheme.typography.titleLarge)
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            Text(
+                                text = tr("Request sent to priest", "పురోహితునికి అభ్యర్థన పంపబడింది", "पुरोहित को अनुरोध भेजा गया"),
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = tr("Waiting for ${bookedPriest?.full_name} to respond…", "${bookedPriest?.full_name} సమాధానం కోసం వేచి ఉన్నాము…", "${bookedPriest?.full_name} के उत्तर की प्रतीक्षा है…"),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            Surface(
+                                color = Color.White,
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text("${tr("Date", "తేదీ", "तारीख")}: ${selectedDate.split("-").reversed().joinToString("/")} • ${tr("Time", "సమయం", "समय")}: $selectedSlot", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text("${tr("Sankalpam", "సంకల్పం", "संकल्प")}: $devoteeGotram • $devoteeNakshatram ($devoteeRashi)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text("${tr("Estimated charges", "అంచనా ఛార్జీలు", "अनुमानित शुल्क")}: ₹${totalAmount.toInt()} (${tr("confirm with priest", "పురోహితునితో నిర్ధారించండి", "पुरोहित से पुष्टि करें")})", style = MaterialTheme.typography.bodySmall, color = Color(0xFF15803D), fontWeight = FontWeight.Bold)
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(14.dp))
+
+                            Text(tr("Waiting for the priest to respond.", "పురోహితుని సమాధానం కోసం వేచి ఉన్నాము.", "पुरोहित के उत्तर की प्रतीक्षा है।"), style = MaterialTheme.typography.bodySmall)
+                            Spacer(modifier = Modifier.height(12.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    if (activeBookingId.isNotBlank()) coroutineScope.launch {
+                                        PurohitApiClient.cancelBooking(activeBookingId, "DEVOTEE_CANCELLED", idempotencyKey = cancelIntentKey).onSuccess {
+                                            isAwaitingPriestAcceptance = false
+                                            activeBookingId = ""
+                                            cancelIntentKey = IdempotencyKeyGenerator.generate()
+                                        }.onFailure { errorMessage = tr("Could not cancel the request. Please try again.", "అభ్యర్థన రద్దు కాలేదు. మళ్లీ ప్రయత్నించండి.", "अनुरोध रद्द नहीं हुआ। फिर प्रयास करें।") }
+                                    }
+                                },
+                                enabled = activeBookingId.isNotBlank(),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Red),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(tr("Cancel request", "అభ్యర్థన రద్దు చేయండి", "अनुरोध रद्द करें"))
+                            }
+                        }
+                    }
+                }
+            } else if (bookedPriest != null && isRequestDispatched) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFDCFCE7))
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text("✅ PUROHIT ACCEPTED & DISPATCHED!", fontWeight = FontWeight.Bold, color = Color(0xFF15803D), style = MaterialTheme.typography.titleMedium)
+                            Text("${bookedPriest?.full_name} accepted your request for ${selectedDate.split("-").reversed().joinToString("/")}.")
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("Slot: $selectedSlot")
+                            Text("Phone: ${bookedPriest?.phone}")
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Surface(
+                                color = Color.White,
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text("Completion OTP: $completionOtp", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                                    Text("Share this code with the priest only after the puja is complete.", style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(14.dp))
+                            Button(
+                                onClick = {
+                                    bookedPriest?.let { onPriestBooked(it, completionOtp, activeBookingId, activeChatRoomId) }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                            ) {
+                                Text("View booking status & chat")
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Item 1: Location & Online Priests Card
+                item {
+                    OutlinedTextField(value = eventAddress, onValueChange = { eventAddress = it }, label = { Text(tr("Pooja address", "పూజ చిరునామా", "पूजा का पता")) }, modifier = Modifier.fillMaxWidth(), supportingText = { Text(tr("Enter the address the priest should visit.", "పురోహితుడు రావాల్సిన చిరునామా నమోదు చేయండి.", "वह पता दर्ज करें जहाँ पुरोहित को आना है।")) })
+                }
+
+                // Item 2: Date & Muhurtham Slot Selection Card
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = tr("Pooja date and time", "పూజ తేదీ మరియు సమయం", "पूजा की तारीख और समय"),
+                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Surface(
+                                    color = MaterialTheme.colorScheme.surfaceVariant,
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text(
+                                        text = tr("Panchangam", "పంచాంగం", "पंचांग"),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            IndiaDatePicker(value = selectedDate, language = language, strings = strings, onDateSelected = { selectedDate = it })
+                            Text(slotMessage, style = MaterialTheme.typography.bodySmall)
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                items(availableSlots) { slot ->
+                                    val label = "${slot.start_time.take(5)} - ${slot.end_time.take(5)}"
+                                    FilterChip(selected = chosenSlot?.id == slot.id, onClick = { chosenSlot = slot; selectedSlot = label }, label = { Text(label) })
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(10.dp))
+
+
+                        }
+                    }
+                }
+
+                // Item 3: Header
+                item {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "📅 Select Ritual Date & Muhurtham Slot",
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Text(
-                            text = "✨ Vedic Panchangam",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFFD97706),
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    // Date Selection Chips
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        items(listOf("Today (Nov 03)", "Tomorrow (Nov 04)", "Next Week (Nov 10)", "Next Month (Dec 03)")) { dateOption ->
-                            FilterChip(
-                                selected = selectedDate == dateOption,
-                                onClick = { selectedDate = dateOption },
-                                label = { Text(dateOption, style = MaterialTheme.typography.labelSmall) }
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    // Muhurtham Slot Chips
-                    Text("Auspicious Muhurtham Window:", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        items(listOf(
-                            "05:30 AM (Brahmi)",
-                            "08:30 AM - 10:30 AM",
-                            "11:45 AM (Abhijit)",
-                            "05:30 PM (Sandhya)"
-                        )) { slotOption ->
-                            FilterChip(
-                                selected = selectedSlot == slotOption,
-                                onClick = { selectedSlot = slotOption },
-                                label = { Text(slotOption, style = MaterialTheme.typography.labelSmall) }
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    // Devotee Gotram & Nakshatram Vedic Alignment
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = Color(0xFFFEF3C7),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("✨", style = MaterialTheme.typography.bodyMedium)
-                            Spacer(modifier = Modifier.width(6.dp))
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Sankalpam: $devoteeGotram Gotram • $devoteeNakshatram Nakshatram ($devoteeRashi) - Aligned with Purohit Vedic calendar.",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Color(0xFF78350F)
+                                text = if (selectedDate.isBlank()) tr("Available priests", "అందుబాటులో ఉన్న పురోహితులు", "उपलब्ध पुरोहित") else "${tr("Available priests", "అందుబాటులో ఉన్న పురోహితులు", "उपलब्ध पुरोहित")} (${selectedDate.split("-").reversed().joinToString("/")})",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                text = poojaTitle,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1
+                            )
+                        }
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(
+                                text = "₹${totalAmount.toInt()}",
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                style = MaterialTheme.typography.titleSmall
                             )
                         }
                     }
                 }
-            }
 
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Selected Ritual Header & Amount
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Available Purohits ($selectedDate)",
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Text(
-                        text = poojaTitle,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.Gray,
-                        maxLines = 1
-                    )
+                if (errorMessage != null) {
+                    item {
+                        Surface(
+                            color = Color(0xFFFEE2E2),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = errorMessage!!,
+                                color = Color(0xFFB91C1C),
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(8.dp)
+                            )
+                        }
+                    }
                 }
-                Surface(
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Text(
-                        text = "₹${totalAmount.toInt()}",
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.labelMedium
-                    )
+
+                if (nearbyPriests.isEmpty() && errorMessage == null) {
+                    item { Text(tr("No online priests nearby. Refresh your location to try again.", "సమీపంలో ఆన్‌లైన్ పురోహితులు లేరు. మళ్లీ ప్రయత్నించడానికి స్థానాన్ని నవీకరించండి.", "आसपास कोई पुरोहित ऑनलाइन नहीं है। पुनः प्रयास के लिए स्थान अपडेट करें।"), style = MaterialTheme.typography.bodyMedium) }
                 }
-            }
 
-            Spacer(modifier = Modifier.height(10.dp))
-
-            if (errorMessage != null) {
-                Surface(
-                    color = Color(0xFFFEE2E2),
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = errorMessage!!,
-                        color = Color(0xFFB91C1C),
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(8.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            // List of Purohits
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
+                // Item 4: Priests List
                 items(nearbyPriests) { priest ->
+                    val isSelected = (selectedPriest?.id == priest.id)
                     Card(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { selectedPriest = priest },
                         shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isSelected) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.surface
+                        ),
+                        border = if (isSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
+                        elevation = CardDefaults.cardElevation(defaultElevation = if (isSelected) 4.dp else 2.dp)
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Row(
@@ -479,13 +482,13 @@ fun RapidoNearbyPriestsScreen(
                                     )
                                 }
                                 Surface(
-                                    color = Color(0xFFDCFCE7),
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else Color(0xFFDCFCE7),
                                     shape = RoundedCornerShape(12.dp)
                                 ) {
                                     Text(
-                                        text = "🟢 Slot Free",
+                                        text = if (isSelected) tr("Selected", "ఎంపికైంది", "चुना गया") else tr("Select to view times", "సమయాలు చూడడానికి ఎంచుకోండి", "समय देखने के लिए चुनें"),
                                         fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF15803D),
+                                        color = if (isSelected) Color.White else Color(0xFF15803D),
                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                         style = MaterialTheme.typography.labelSmall
                                     )
@@ -494,67 +497,52 @@ fun RapidoNearbyPriestsScreen(
 
                             Spacer(modifier = Modifier.height(8.dp))
 
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Text(
-                                    text = "📍 ${priest.distance_km} km away",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = "★ ${priest.rating_avg} (${priest.repeat_booking_count} repeat)",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = Color(0xFFD97706),
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = "🛵 ${priest.vehicle_type}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = Color.Gray
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.height(10.dp))
-
-                            // Dispatch Button: Triggers Request -> Purohit Must Accept!
                             Button(
                                 onClick = {
-                                    bookedPriest = priest
-                                    isAwaitingPriestAcceptance = true
-                                    coroutineScope.launch {
-                                        val res = PurohitApiClient.createBooking(
-                                            priestId = priest.id,
-                                            poojaId = poojaId,
-                                            totalAmount = totalAmount,
-                                            scheduledDate = selectedDate,
-                                            slotTime = selectedSlot,
-                                            gotram = devoteeGotram,
-                                            nakshatram = devoteeNakshatram,
-                                            rashi = devoteeRashi,
-                                            purpose = "Family Prosperity & Health"
-                                        )
-                                        val booking = res.getOrNull()
-                                        val otp = booking?.completion_otp ?: "4921"
-                                        val bId = booking?.booking_id ?: "f312db8f-1d71-4cab-b5ba-77fbead70c71"
-                                        completionOtp = otp
-                                        activeBookingId = bId
-
-                                        val roomRes = PurohitApiClient.getChatRoomByBooking(bId)
-                                        val roomId = roomRes.getOrNull()?.room_id ?: "d66283f3-1eb0-40b3-afc0-c37d355b90f8"
-                                        activeChatRoomId = roomId
-                                    }
+                                    if (selectedPriest?.id == priest.id && chosenSlot != null && eventAddress.isNotBlank()) priestToConfirm = priest else { selectedPriest = priest; slotMessage = tr("Enter the address and select a date and time above.", "చిరునామా నమోదు చేసి పైన తేదీ, సమయం ఎంచుకోండి.", "पता दर्ज करें और ऊपर तारीख व समय चुनें।") }
                                 },
                                 modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(10.dp)
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
+                                )
                             ) {
-                                Text("⚡ Request This Purohit ($selectedDate)")
+                                Text(if (isSelected && chosenSlot != null) tr("Review request", "అభ్యర్థన పరిశీలించండి", "अनुरोध जाँचें") else tr("Select priest", "పురోహితుడిని ఎంచుకోండి", "पुरोहित चुनें"))
                             }
                         }
                     }
                 }
             }
         }
+        }
+
+        priestToConfirm?.let { priest ->
+            AlertDialog(
+                onDismissRequest = { priestToConfirm = null },
+                title = { Text(tr("Review booking request", "బుకింగ్ అభ్యర్థన పరిశీలించండి", "बुकिंग अनुरोध जाँचें")) },
+                text = { Text("${priest.full_name}\n$poojaTitle\n${tr("Date", "తేదీ", "तारीख")}: ${selectedDate.split("-").reversed().joinToString("/")}\n${tr("Time", "సమయం", "समय")}: $selectedSlot\n${tr("Address", "చిరునామా", "पता")}: $eventAddress\n${tr("Estimated charges", "అంచనా ఛార్జీలు", "अनुमानित शुल्क")}: ₹${totalAmount.toInt()}\n\n${tr("Confirm priest and material charges directly. No online payment is collected in this test.", "పురోహితులు, సామగ్రి ఛార్జీలను నేరుగా నిర్ధారించండి. ఈ పరీక్షలో ఆన్‌లైన్ చెల్లింపు వసూలు చేయరు.", "पुरोहित और सामग्री के शुल्क सीधे तय करें। इस परीक्षण में ऑनलाइन भुगतान नहीं लिया जाता।")}") },
+                confirmButton = { TextButton(onClick = { priestToConfirm = null; sendBookingRequest(priest) }) { Text(tr("Send request", "అభ్యర్థన పంపండి", "अनुरोध भेजें")) } },
+                dismissButton = { TextButton(onClick = { priestToConfirm = null }) { Text(strings.common.cancelAction) } }
+            )
+        }
+    }
+}
+
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun IndiaDatePicker(value: String, language: AppLanguage, strings: StringContract, onDateSelected: (String) -> Unit) {
+    var showPicker by remember { mutableStateOf(false) }
+    val today = remember { Clock.System.now().toLocalDateTime(TimeZone.of("Asia/Kolkata")).date }
+    val minimumUtc = remember(today) { today.atStartOfDayIn(TimeZone.UTC).toEpochMilliseconds() }
+    val displayed = value.split("-").let { if (it.size == 3) "${it[2]}/${it[1]}/${it[0]}" else "Select date" }
+    OutlinedButton(onClick = { showPicker = true }, modifier = Modifier.fillMaxWidth()) { Text(if (value.isEmpty()) when (language) { AppLanguage.TELUGU -> "తేదీ ఎంచుకోండి (DD/MM/YYYY)"; AppLanguage.HINDI -> "तारीख चुनें (DD/MM/YYYY)"; else -> "Select date (DD/MM/YYYY)" } else displayed) }
+    if (showPicker) {
+        val picker = rememberDatePickerState(initialSelectedDateMillis = value.takeIf { it.isNotBlank() }?.let { runCatching { LocalDate.parse(it).atStartOfDayIn(TimeZone.UTC).toEpochMilliseconds() }.getOrNull() } ?: minimumUtc,
+            selectableDates = remember(minimumUtc) { object : SelectableDates { override fun isSelectableDate(utcTimeMillis: Long) = utcTimeMillis >= minimumUtc } })
+        DatePickerDialog(onDismissRequest = { showPicker = false }, confirmButton = { TextButton(onClick = {
+            picker.selectedDateMillis?.let { onDateSelected(Instant.fromEpochMilliseconds(it).toLocalDateTime(TimeZone.UTC).date.toString()) }
+            showPicker = false
+        }) { Text("OK") } }, dismissButton = { TextButton(onClick = { showPicker = false }) { Text(strings.common.cancelAction) } }) { DatePicker(state = picker, showModeToggle = false) }
     }
 }

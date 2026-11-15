@@ -37,44 +37,38 @@ fun ColleagueReferralModal(
     onDismiss: () -> Unit
 ) {
     val coroutineScope = rememberCoroutineScope()
-    var colleagues by remember {
-        mutableStateOf(
-            listOf(
-                TrustedColleague("6e7d277c-4ee2-469f-96ac-331517389763", "Brahmasri Venkata Sharma", "Smartha", "Krishna Yajurveda", 16, 4.95, true),
-                TrustedColleague("6e7d277c-4ee2-469f-96ac-331517389764", "Purohit Srinivasa Dikshitulu", "Smartha", "Krishna Yajurveda", 15, 4.92, true),
-                TrustedColleague("6e7d277c-4ee2-469f-96ac-331517389765", "Vedam Subrahmanya Sastry", "Smartha", "Rigveda Shakha", 20, 4.95, true),
-                TrustedColleague("6e7d277c-4ee2-469f-96ac-331517389766", "Acharya Madhava Sharma", "Madhwa", "Rigveda Shakha", 12, 4.80, false)
-            )
-        )
-    }
+    var colleagues by remember { mutableStateOf<List<TrustedColleague>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    var directoryError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         val res = PurohitApiClient.fetchPriestsList()
         res.onSuccess { dirList ->
-            if (dirList.isNotEmpty()) {
+            run {
                 colleagues = dirList.filter { it.id != referringPriestId }.map { p ->
                     TrustedColleague(
                         id = p.id,
                         name = p.full_name,
                         sampradaya = p.sampradaya,
                         vedaShakha = p.veda_shakha,
-                        experienceYears = 10,
+                        experienceYears = 0,
                         ratingAvg = p.rating_avg,
-                        isSlotFree = true
+                        isSlotFree = false
                     )
                 }
             }
-        }
+        }.onFailure { directoryError = "Could not load colleagues. Please reopen to retry." }
+        loading = false
     }
 
     var selectedColleague by remember { mutableStateOf<TrustedColleague?>(null) }
     LaunchedEffect(colleagues) {
         if (selectedColleague == null && colleagues.isNotEmpty()) {
-            selectedColleague = colleagues.firstOrNull { it.isSlotFree } ?: colleagues.first()
+            selectedColleague = colleagues.first()
         }
     }
 
-    var reasonText by remember { mutableStateOf("Prior temple seva commitment for auspicious muhurtham") }
+    var reasonText by remember { mutableStateOf("") }
     var isSubmitting by remember { mutableStateOf(false) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
 
@@ -95,16 +89,16 @@ fun ColleagueReferralModal(
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Reassigns '$bookingTitle' to a verified peer purohit. Devotee is notified immediately and the colleague's schedule is automatically blocked for the slot.",
+                text = "Request reassignment of '$bookingTitle' to a colleague.",
                 style = MaterialTheme.typography.bodySmall,
-                color = Color.DarkGray
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             Spacer(modifier = Modifier.height(8.dp))
 
             Surface(
                 shape = RoundedCornerShape(8.dp),
-                color = Color(0xFFFEF3C7),
+                color = MaterialTheme.colorScheme.surfaceVariant,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
@@ -113,16 +107,19 @@ fun ColleagueReferralModal(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("⏰ Slot to Reassign:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
-                    Text(scheduledSlot, fontWeight = FontWeight.Bold, color = Color(0xFFB45309), style = MaterialTheme.typography.labelSmall)
+                    Text(scheduledSlot, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall)
                 }
             }
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            Text("Select Available Purohit (Conflict-Checked):", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+            Text("Select a colleague:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
 
             Spacer(modifier = Modifier.height(8.dp))
 
+            if (loading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            else if (directoryError != null) Text(directoryError!!, color = MaterialTheme.colorScheme.error)
+            else if (colleagues.isEmpty()) Text("No colleagues available", color = MaterialTheme.colorScheme.onSurfaceVariant)
             colleagues.forEach { c ->
                 val isSelected = selectedColleague?.id == c.id
                 Card(
@@ -143,15 +140,9 @@ fun ColleagueReferralModal(
                         Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(c.name, fontWeight = FontWeight.Bold)
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = if (c.isSlotFree) "🟢 Free Slot" else "🔴 Busy",
-                                    color = if (c.isSlotFree) Color(0xFF15803D) else Color.Red,
-                                    fontWeight = FontWeight.Bold,
-                                    style = MaterialTheme.typography.labelSmall
-                                )
+
                             }
-                            Text("${c.vedaShakha} • ${c.sampradaya}", style = MaterialTheme.typography.labelSmall, color = Color.DarkGray)
+                            Text("${c.vedaShakha} • ${c.sampradaya}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Text("⭐ ${c.ratingAvg}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                     }
@@ -189,7 +180,7 @@ fun ColleagueReferralModal(
                             res.onSuccess {
                                 onReferralConfirmed(c.id, c.name, reasonText)
                             }.onFailure {
-                                onReferralConfirmed(c.id, c.name, reasonText)
+                                statusMessage = "Could not reassign the booking. Please try again."
                             }
                         }
                     }
@@ -198,7 +189,7 @@ fun ColleagueReferralModal(
                 modifier = Modifier.fillMaxWidth().height(48.dp),
                 shape = RoundedCornerShape(10.dp)
             ) {
-                Text(if (isSubmitting) "Reassigning & Blocking Slot..." else "Confirm Instant Reassignment & Transfer Slot")
+                Text(if (isSubmitting) "Reassigning..." else "Confirm reassignment")
             }
 
             Spacer(modifier = Modifier.height(8.dp))

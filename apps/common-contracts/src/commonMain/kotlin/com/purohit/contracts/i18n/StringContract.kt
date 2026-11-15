@@ -12,4 +12,5 @@ interface StringContract {
     val cancellation: CancellationStrings
     val common: CommonStrings
     val error: ErrorStrings
+    val event: EventStrings
 }

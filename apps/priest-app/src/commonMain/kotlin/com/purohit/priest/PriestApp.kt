@@ -2,8 +2,12 @@ package com.purohit.priest
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -12,6 +16,8 @@ import androidx.compose.ui.unit.dp
 import com.purohit.contracts.i18n.AppLanguage
 import com.purohit.contracts.i18n.LocalizationManager
 import com.purohit.contracts.i18n.StringContract
+import com.purohit.contracts.resilience.JitteredBackoff
+import com.purohit.priest.location.DutyServiceController
 import com.purohit.priest.network.PurohitApiClient
 import com.purohit.priest.ui.auth.PriestRegistrationScreen
 import com.purohit.priest.ui.chat.PriestChatScreen
@@ -19,6 +25,9 @@ import com.purohit.priest.ui.dispatch.RapidoIncomingAlertModal
 import com.purohit.priest.ui.duty.DutyToggleScreen
 import com.purohit.priest.ui.materials.PriestSamagriChecklistModal
 import com.purohit.priest.ui.referral.ColleagueReferralModal
+import com.purohit.priest.ui.resilience.PriestErrorScreen
+import com.purohit.priest.ui.resilience.PriestNoInternetScreen
+import com.purohit.priest.ui.resilience.PriestVedicLoadingScreen
 import com.purohit.priest.ui.schedule.PriestScheduleScreen
 import com.purohit.priest.ui.services.PriestServicesScreen
 import com.purohit.priest.ui.studio.BroadcasterStudioScreen
@@ -28,12 +37,15 @@ val LocalPriestStrings = compositionLocalOf<StringContract> {
     LocalizationManager.getStrings(AppLanguage.ENGLISH)
 }
 
+val LocalPriestLanguage = staticCompositionLocalOf { AppLanguage.TELUGU }
+
 enum class PriestScreen {
     REGISTRATION,
     DUTY_RADAR,         // Tab 1: ⚡ Radar & Duty Dashboard
     SCHEDULE_WORKBENCH, // Tab 2: 📅 Schedule Workbench
     CUSTOM_SERVICES,    // Tab 3: 📋 My Services & Dynamic Dakshina
     LIVE_STUDIO,        // Tab 4: 📹 Live Studio & Active Rituals
+    PUSHKARALU,         // Tab 4 while an event is live (replaces Live Studio; PRD v2 defers live E-Pooja)
     CHAT,               // 💬 Bidirectional Chat with Devotee
     PROFILE             // Tab 5: 👤 Vedic Credentials & Language
 }
@@ -41,106 +53,180 @@ enum class PriestScreen {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PriestAppRoot() {
-    var isRegistered by remember { mutableStateOf(true) } // Verified priest
-    var currentScreen by remember { mutableStateOf(PriestScreen.DUTY_RADAR) }
-    var priestName by remember { mutableStateOf("Brahmasri Sushanth Sastry") }
-    var priestId by remember { mutableStateOf("6e7d277c-4ee2-469f-96ac-331517389762") }
+    var isRegistered by remember { mutableStateOf(false) } // Require priest login/registration for pilot
+    var currentScreen by remember { mutableStateOf(PriestScreen.REGISTRATION) }
+    var priestName by remember { mutableStateOf("") }
+    var priestId by remember { mutableStateOf("") }
 
     // Active booking details connected to PostgreSQL DB
-    var hasActiveBooking by remember { mutableStateOf(true) }
-    var activeBookingId by remember { mutableStateOf("f312db8f-1d71-4cab-b5ba-77fbead70c71") }
-    var activeChatRoomId by remember { mutableStateOf("d66283f3-1eb0-40b3-afc0-c37d355b90f8") }
-    var activeDevoteeName by remember { mutableStateOf("Sushanth2") }
-    var activeDevoteePhone by remember { mutableStateOf("9177961089") }
-    var activeAddress by remember { mutableStateOf("Plot 42, Sri Rama Nagar, Madhav Nagar, Hyderabad (Landmark: Behind Sri Rama Temple)") }
-    var activePoojaTitle by remember { mutableStateOf("Sri Satyanarayana Swamy Vratam") }
-    var activeDakshina by remember { mutableStateOf(3716.0) }
-    var activeScheduledDate by remember { mutableStateOf("Tomorrow (Nov 4)") }
-    var activeSlotTime by remember { mutableStateOf("Abhijit Muhurtham (11:45 AM - 01:45 PM)") }
-    var activeDevoteeGotram by remember { mutableStateOf("Kashyapa") }
-    var activeDevoteeNakshatram by remember { mutableStateOf("Rohini") }
-    var activeDevoteeRashi by remember { mutableStateOf("Vrishabha") }
-    var activeSankalpamPurpose by remember { mutableStateOf("Family Prosperity & Health") }
-
-    val coroutineScope = rememberCoroutineScope()
-
-    LaunchedEffect(activeBookingId) {
-        val res = PurohitApiClient.fetchBookingDetails(activeBookingId)
-        res.onSuccess { b ->
-            if (b.devotee_name.isNotEmpty()) activeDevoteeName = b.devotee_name
-            if (b.devotee_phone.isNotEmpty()) activeDevoteePhone = b.devotee_phone
-            if (b.event_address.isNotEmpty()) activeAddress = b.event_address
-            if (b.pooja_title.isNotEmpty()) activePoojaTitle = b.pooja_title
-            if (b.total_amount > 0) activeDakshina = b.total_amount
-            if (b.chat_room_id.isNotEmpty()) activeChatRoomId = b.chat_room_id
-            if (b.scheduled_date.isNotEmpty()) activeScheduledDate = b.scheduled_date
-            if (b.slot_time.isNotEmpty()) activeSlotTime = b.slot_time
-            if (b.devotee_gotram.isNotEmpty()) activeDevoteeGotram = b.devotee_gotram
-            if (b.devotee_nakshatram.isNotEmpty()) activeDevoteeNakshatram = b.devotee_nakshatram
-            if (b.devotee_rashi.isNotEmpty()) activeDevoteeRashi = b.devotee_rashi
-            if (b.sankalpam_purpose.isNotEmpty()) activeSankalpamPurpose = b.sankalpam_purpose
-        }
-    }
+    var hasActiveBooking by remember { mutableStateOf(false) }
+    var activeBookingId by remember { mutableStateOf("") }
+    var activeChatRoomId by remember { mutableStateOf("") }
+    var activeDevoteeName by remember { mutableStateOf("") }
+    var activeDevoteePhone by remember { mutableStateOf("") }
+    var activeAddress by remember { mutableStateOf("") }
+    var activePoojaTitle by remember { mutableStateOf("") }
+    var activeDakshina by remember { mutableStateOf(0.0) }
+    var activeScheduledDate by remember { mutableStateOf("") }
+    var activeSlotTime by remember { mutableStateOf("") }
+    var activeDevoteeGotram by remember { mutableStateOf("") }
+    var activeDevoteeNakshatram by remember { mutableStateOf("") }
+    var activeDevoteeRashi by remember { mutableStateOf("") }
+    var activeSankalpamPurpose by remember { mutableStateOf("") }
+    var activeBookingStatus by remember { mutableStateOf("IN_TRANSIT") }
+    var activeBookingType by remember { mutableStateOf("") }
+    var eventConfig by remember { mutableStateOf<com.purohit.contracts.event.EventConfig?>(null) }
 
     var hasSimulatedIncomingAlert by remember { mutableStateOf(false) }
+    var incomingError by remember { mutableStateOf<String?>(null) }
+    var incomingBusy by remember { mutableStateOf(false) }
     var showChecklistModal by remember { mutableStateOf(false) }
     var prefilledChatMessage by remember { mutableStateOf("") }
     var showReferralModal by remember { mutableStateOf(false) }
     var showLanguageModal by remember { mutableStateOf(false) }
+    var showAppearance by remember { mutableStateOf(false) }
+    var appearance by remember { mutableStateOf(appearanceFromStoredValue(readAppearance())) }
     var showLogoutModal by remember { mutableStateOf(false) }
+    var isNetworkError by remember { mutableStateOf(false) }
+    var networkErrorMessage by remember { mutableStateOf("") }
 
-    var currentLanguage by remember { mutableStateOf(AppLanguage.TELUGU) } // Default Telugu for priests
+    var currentLanguage by rememberSaveable { mutableStateOf(AppLanguage.TELUGU) } // Default Telugu for priests
     val strings = remember(currentLanguage) { LocalizationManager.getStrings(currentLanguage) }
 
-    CompositionLocalProvider(LocalPriestStrings provides strings) {
+    val coroutineScope = rememberCoroutineScope()
+
+    var priestProfile by remember { mutableStateOf(PurohitApiClient.currentPriestProfile) }
+    var showEmailDialog by remember { mutableStateOf(false) }
+    var emailInput by remember { mutableStateOf("") }
+    var emailLoading by remember { mutableStateOf(false) }
+    var emailMessage by remember { mutableStateOf<String?>(null) }
+    var emailError by remember { mutableStateOf<String?>(null) }
+
+    fun reloadPriestProfile() {
+        if (PurohitApiClient.authToken.isNotBlank()) {
+            coroutineScope.launch {
+                val res = PurohitApiClient.fetchPriestProfile()
+                res.onSuccess {
+                    priestProfile = it
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(currentScreen) {
+        if (currentScreen == PriestScreen.PROFILE) {
+            reloadPriestProfile()
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        if (PurohitApiClient.authToken.isNotBlank()) {
+            PurohitApiClient.fetchPriestProfile().onSuccess {
+                priestProfile = it
+                priestId = it.id
+                priestName = it.full_name
+                isRegistered = true
+                currentScreen = PriestScreen.DUTY_RADAR
+            }.onFailure { networkErrorMessage = it.message.orEmpty(); isNetworkError = true }
+        }
+    }
+
+    // Event config: on login and every 10 minutes (no config push on iOS yet) (the server enforces every flag regardless).
+    LaunchedEffect(isRegistered) {
+        if (!isRegistered) return@LaunchedEffect
+        while (true) {
+            PurohitApiClient.fetchEventConfig().onSuccess { eventConfig = it }
+            kotlinx.coroutines.delay(10 * 60 * 1000L)
+        }
+    }
+
+    // Realtime Cloud Dispatch Sync: Polls for incoming Devotee Requests & Active Rituals
+    LaunchedEffect(priestId, hasActiveBooking) {
+        if (priestId.isBlank()) return@LaunchedEffect
+        val backoff = JitteredBackoff(baseDelayMs = 5000L, maxDelayMs = 30000L)
+        while (true) {
+            try {
+                if (!hasActiveBooking) {
+                    // 1. Check for incoming REQUESTED bookings for this priest
+                    val reqRes = PurohitApiClient.fetchPriestBookings(priestId, "REQUESTED")
+                    reqRes.onSuccess { bookings ->
+                        isNetworkError = false
+                        val incoming = bookings.firstOrNull { it.status == "REQUESTED" }
+                        if (incoming != null && incoming.id != activeBookingId) {
+                            incomingError = null
+                            activeBookingId = incoming.id
+                            activePoojaTitle = incoming.pooja_title
+                            activeDevoteeName = incoming.devotee_name
+                            activeDevoteePhone = incoming.devotee_phone
+                            activeAddress = incoming.event_address
+                            activeDakshina = incoming.total_amount
+                            activeScheduledDate = incoming.scheduled_date
+                            activeSlotTime = incoming.slot_time
+                            activeDevoteeGotram = incoming.devotee_gotram
+                            activeDevoteeNakshatram = incoming.devotee_nakshatram
+                            activeDevoteeRashi = incoming.devotee_rashi
+                            activeSankalpamPurpose = incoming.sankalpam_purpose
+                            activeChatRoomId = incoming.chat_room_id
+                            activeBookingType = incoming.booking_type
+                            hasSimulatedIncomingAlert = true
+                        }
+                    }
+
+                    // 2. Check if an ongoing accepted/in-transit ritual is active to resume
+                    val actRes = PurohitApiClient.fetchPriestBookings(priestId, "ACTIVE")
+                    actRes.onSuccess { bookings ->
+                        val ongoing = bookings.firstOrNull {
+                            it.status in listOf("ACCEPTED", "IN_TRANSIT", "ARRIVED", "POOJA_STARTED", "IN_PROGRESS")
+                        }
+                        if (ongoing != null) {
+                            activeBookingId = ongoing.id
+                            activePoojaTitle = ongoing.pooja_title
+                            activeDevoteeName = ongoing.devotee_name
+                            activeDevoteePhone = ongoing.devotee_phone
+                            activeAddress = ongoing.event_address
+                            activeDakshina = ongoing.total_amount
+                            activeScheduledDate = ongoing.scheduled_date
+                            activeSlotTime = ongoing.slot_time
+                            activeChatRoomId = ongoing.chat_room_id
+                            activeBookingStatus = ongoing.status
+                            activeBookingType = ongoing.booking_type
+                            hasActiveBooking = true
+                        }
+                    }
+                } else if (activeBookingId.isNotBlank()) {
+                    // Check active booking status updates
+                    val bRes = PurohitApiClient.fetchBookingDetails(activeBookingId)
+                    bRes.onSuccess { b ->
+                        activeBookingStatus = b.status
+                        if (b.status == "COMPLETED" || b.status == "CANCELLED") {
+                            hasActiveBooking = false
+                            activeBookingId = ""
+                        }
+                    }
+                }
+            } catch (t: Throwable) {
+                backoff.recordError()
+            }
+            backoff.awaitNext()
+        }
+    }
+
+    CompositionLocalProvider(LocalPriestStrings provides strings, LocalPriestLanguage provides currentLanguage) {
         MaterialTheme(
-            colorScheme = lightColorScheme(
-                primary = Color(0xFFB45309), // Deep Ochre / Gerua
-                secondary = Color(0xFFD97706),
-                background = Color(0xFFFFFBEB)
-            )
+            colorScheme = appearanceScheme(appearance),
+            typography = appTypography(),
+            shapes = Shapes(small = androidx.compose.foundation.shape.RoundedCornerShape(8.dp), medium = androidx.compose.foundation.shape.RoundedCornerShape(16.dp), large = androidx.compose.foundation.shape.RoundedCornerShape(20.dp))
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 Scaffold(
                     topBar = {
-                        if (isRegistered && currentScreen != PriestScreen.CHAT) {
-                            Surface(
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 16.dp, vertical = 10.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = "🕉️ అయ్యగారు (Purohit Portal)",
-                                        color = Color.White,
-                                        fontWeight = FontWeight.Bold,
-                                        style = MaterialTheme.typography.titleMedium
-                                    )
-                                    Surface(
-                                        shape = MaterialTheme.shapes.small,
-                                        color = Color.White.copy(alpha = 0.2f),
-                                        modifier = Modifier.clickable { showLanguageModal = true }
-                                    ) {
-                                        Text(
-                                            text = "🌐 ${currentLanguage.nativeName}",
-                                            color = Color.White,
-                                            fontWeight = FontWeight.Bold,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                        )
-                                    }
-                                }
-                            }
+                        if (currentScreen != PriestScreen.CHAT) {
+                            AppHeader(currentLanguage, onAppearance = { showAppearance = true }, onLanguage = { showLanguageModal = true })
                         }
                     },
                     bottomBar = {
                         if (isRegistered && currentScreen != PriestScreen.CHAT) {
-                            NavigationBar {
+                            NavigationBar(containerColor = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer) {
                                 NavigationBarItem(
                                     selected = currentScreen == PriestScreen.DUTY_RADAR,
                                     onClick = { currentScreen = PriestScreen.DUTY_RADAR },
@@ -159,7 +245,12 @@ fun PriestAppRoot() {
                                     label = { Text(strings.common.tabCustomServices) },
                                     icon = { Text("📋") }
                                 )
-                                NavigationBarItem(
+                                if (eventConfig?.isLive == true || currentScreen == PriestScreen.PUSHKARALU) NavigationBarItem(
+                                    selected = currentScreen == PriestScreen.PUSHKARALU,
+                                    onClick = { currentScreen = PriestScreen.PUSHKARALU },
+                                    label = { Text(strings.event.tabEvent) },
+                                    icon = { Text("🌊") }
+                                ) else NavigationBarItem(
                                     selected = currentScreen == PriestScreen.LIVE_STUDIO,
                                     onClick = { currentScreen = PriestScreen.LIVE_STUDIO },
                                     label = { Text("Live Studio") },
@@ -176,14 +267,23 @@ fun PriestAppRoot() {
                     }
                 ) { paddingValues ->
                     Box(modifier = Modifier.padding(paddingValues).fillMaxSize()) {
-                        when (currentScreen) {
-                            PriestScreen.REGISTRATION -> PriestRegistrationScreen(
-                                onRegistrationSuccess = { name, _ ->
-                                    priestName = name
-                                    isRegistered = true
-                                    currentScreen = PriestScreen.DUTY_RADAR
-                                }
+                        if (isNetworkError) {
+                            PriestNoInternetScreen(
+                                strings = strings,
+                                onRetry = { isNetworkError = false },
+                                serverUrl = PurohitApiClient.baseUrl
                             )
+                        } else {
+                            when (currentScreen) {
+                                PriestScreen.REGISTRATION -> PriestRegistrationScreen(
+                                    strings = strings,
+                                    onRegistrationSuccess = { name, _, id ->
+                                        priestName = name
+                                        priestId = id
+                                        isRegistered = true
+                                        currentScreen = PriestScreen.DUTY_RADAR
+                                    }
+                                )
                             PriestScreen.DUTY_RADAR -> DutyToggleScreen(
                                 onSimulateIncomingOrder = { hasSimulatedIncomingAlert = true },
                                 hasActiveBooking = hasActiveBooking,
@@ -194,12 +294,16 @@ fun PriestAppRoot() {
                                 eventAddress = activeAddress,
                                 poojaTitle = activePoojaTitle,
                                 dakshinaAmount = activeDakshina,
+                                priestId = priestId,
+                                initialBookingStatus = activeBookingStatus,
                                 currentLanguage = currentLanguage,
                                 strings = strings,
                                 onOpenChat = { currentScreen = PriestScreen.CHAT },
                                 onOpenChecklist = { showChecklistModal = true },
-                                onBookingCompleted = { hasActiveBooking = false }
+                                onBookingCompleted = { hasActiveBooking = false; activeBookingId = "" },
+                                requiresCodeToStart = activeBookingType.startsWith("EVENT")
                             )
+                            PriestScreen.PUSHKARALU -> com.purohit.priest.ui.pushkaralu.PriestEventScreen(eventConfig, currentLanguage, strings.event, hasActiveBooking)
                             PriestScreen.SCHEDULE_WORKBENCH -> PriestScheduleScreen(
                                 priestId = priestId,
                                 strings = strings
@@ -221,7 +325,7 @@ fun PriestAppRoot() {
                             )
                             PriestScreen.PROFILE -> {
                                 Column(
-                                    modifier = Modifier.fillMaxSize().padding(20.dp),
+                                    modifier = Modifier.fillMaxSize().padding(20.dp).verticalScroll(rememberScrollState()),
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
                                     Text(
@@ -230,11 +334,181 @@ fun PriestAppRoot() {
                                         fontWeight = FontWeight.Bold
                                     )
                                     Text(
-                                        text = "Rigveda Shakha • Smartha Sampradaya",
+                                        text = listOfNotNull(priestProfile?.veda_shakha?.takeIf { it.isNotBlank() }, priestProfile?.sampradaya?.takeIf { it.isNotBlank() }).joinToString(" • "),
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = Color.Gray
                                     )
-                                    Spacer(modifier = Modifier.height(20.dp))
+                                    Spacer(modifier = Modifier.height(16.dp))
+
+                                    // Email Password Recovery Card
+                                    Card(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(16.dp),
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                                    ) {
+                                        Column(modifier = Modifier.padding(16.dp)) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = "📧 Password Recovery Email",
+                                                    fontWeight = FontWeight.Bold,
+                                                    style = MaterialTheme.typography.titleSmall
+                                                )
+                                                IconButton(onClick = { reloadPriestProfile() }, modifier = Modifier.size(28.dp)) {
+                                                    Text("🔄", style = MaterialTheme.typography.bodySmall)
+                                                }
+                                            }
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            val currentEmail = priestProfile?.email.orEmpty()
+                                            val isVerified = priestProfile?.email_verified == true
+
+                                            if (currentEmail.isNotBlank()) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text(text = currentEmail, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                                                    if (isVerified) {
+                                                        Surface(
+                                                            shape = RoundedCornerShape(8.dp),
+                                                            color = Color(0xFFDCFCE7)
+                                                        ) {
+                                                            Text(
+                                                                text = "🟢 Verified",
+                                                                color = Color(0xFF15803D),
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                fontWeight = FontWeight.Bold,
+                                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                                            )
+                                                        }
+                                                    } else {
+                                                        Surface(
+                                                            shape = RoundedCornerShape(8.dp),
+                                                            color = Color(0xFFFEF3C7)
+                                                        ) {
+                                                            Text(
+                                                                text = "⚠️ Unverified",
+                                                                color = Color(0xFFB45309),
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                fontWeight = FontWeight.Bold,
+                                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                                Spacer(modifier = Modifier.height(6.dp))
+                                                Text(
+                                                    text = if (isVerified) {
+                                                        "Self-service password reset is enabled via single-use reset links sent to this email."
+                                                    } else {
+                                                        "Verification link pending. Complete verification to enable password reset."
+                                                    },
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = Color.Gray
+                                                )
+                                            } else {
+                                                Text(
+                                                    text = "No verified email configured. Password recovery via email is disabled.",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = Color.Gray
+                                                )
+                                            }
+
+                                            Spacer(modifier = Modifier.height(12.dp))
+                                            Button(
+                                                onClick = {
+                                                    emailInput = currentEmail
+                                                    emailMessage = null
+                                                    emailError = null
+                                                    showEmailDialog = true
+                                                },
+                                                modifier = Modifier.fillMaxWidth(),
+                                                shape = RoundedCornerShape(10.dp)
+                                            ) {
+                                                Text(if (currentEmail.isNotBlank()) "Update Recovery Email" else "Add Recovery Email")
+                                            }
+                                        }
+                                    }
+
+                                    if (showEmailDialog) {
+                                        AlertDialog(
+                                            onDismissRequest = { if (!emailLoading) showEmailDialog = false },
+                                            title = { Text("Set Priest Recovery Email") },
+                                            text = {
+                                                Column {
+                                                    Text(
+                                                        "Enter your email address to receive a secure single-use verification link. Your existing recovery email is preserved until the replacement is verified.",
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = Color.Gray
+                                                    )
+                                                    Spacer(modifier = Modifier.height(12.dp))
+                                                    OutlinedTextField(
+                                                        value = emailInput,
+                                                        onValueChange = { emailInput = it },
+                                                        label = { Text("Email Address") },
+                                                        singleLine = true,
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        enabled = !emailLoading
+                                                    )
+
+                                                    emailMessage?.let { msg ->
+                                                        Spacer(modifier = Modifier.height(8.dp))
+                                                        Text(msg, color = Color(0xFF15803D), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                                                    }
+
+                                                    emailError?.let { err ->
+                                                        Spacer(modifier = Modifier.height(8.dp))
+                                                        Text(err, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                                                    }
+                                                }
+                                            },
+                                            confirmButton = {
+                                                Button(
+                                                    onClick = {
+                                                        if (emailInput.isNotBlank()) {
+                                                            emailLoading = true
+                                                            emailMessage = null
+                                                            emailError = null
+                                                            coroutineScope.launch {
+                                                                val res = PurohitApiClient.requestEmailVerification(emailInput.trim())
+                                                                emailLoading = false
+                                                                res.fold(
+                                                                    onSuccess = {
+                                                                        emailMessage = "Verification link sent! Please check your inbox and click the single-use link to confirm."
+                                                                        reloadPriestProfile()
+                                                                    },
+                                                                    onFailure = { ex ->
+                                                                        emailError = ex.message ?: "Failed to dispatch verification email."
+                                                                    }
+                                                                )
+                                                            }
+                                                        }
+                                                    },
+                                                    enabled = !emailLoading && emailInput.isNotBlank()
+                                                ) {
+                                                    if (emailLoading) {
+                                                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
+                                                    } else {
+                                                        Text("Send Link")
+                                                    }
+                                                }
+                                            },
+                                            dismissButton = {
+                                                TextButton(
+                                                    onClick = { showEmailDialog = false },
+                                                    enabled = !emailLoading
+                                                ) {
+                                                    Text("Close")
+                                                }
+                                            }
+                                        )
+                                    }
+
+                                    Spacer(modifier = Modifier.height(16.dp))
                                     Button(
                                         onClick = { showReferralModal = true },
                                         modifier = Modifier.fillMaxWidth()
@@ -249,6 +523,7 @@ fun PriestAppRoot() {
                                         Text("🌐 Change Language (${currentLanguage.nativeName})")
                                     }
                                     Spacer(modifier = Modifier.height(10.dp))
+                                    Spacer(modifier = Modifier.height(10.dp))
                                     Button(
                                         onClick = { showLogoutModal = true },
                                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
@@ -258,6 +533,7 @@ fun PriestAppRoot() {
                                     }
                                 }
                             }
+                        }
                         }
                     }
                 }
@@ -279,16 +555,31 @@ fun PriestAppRoot() {
                         sankalpamPurpose = activeSankalpamPurpose,
                         currentLanguage = currentLanguage,
                         strings = strings,
+                        errorMessage = incomingError,
+                        isSubmitting = incomingBusy,
                         onAccept = {
+                            incomingBusy = true
+                            incomingError = null
                             coroutineScope.launch {
                                 PurohitApiClient.updateBookingStatus(
                                     bookingId = activeBookingId,
                                     status = "ACCEPTED",
                                     priestId = priestId
-                                )
+                                ).onSuccess {
+                                    hasSimulatedIncomingAlert = false
+                                    hasActiveBooking = true
+                                    activeBookingStatus = "ACCEPTED"
+                                }.onFailure { err ->
+                                    incomingError = if (err.message.orEmpty().contains("priest_busy")) strings.event.priestBusyError
+                                    else if (err.message.orEmpty().contains("request_expired")) strings.event.priestDeclined
+                                    else when (currentLanguage) {
+                                        AppLanguage.TELUGU -> "బుకింగ్ స్వీకరించలేకపోయాము. సమయం అందుబాటులో ఉందో తనిఖీ చేసి మళ్లీ ప్రయత్నించండి."
+                                        AppLanguage.HINDI -> "बुकिंग स्वीकार नहीं हुई। समय की उपलब्धता जाँचकर फिर प्रयास करें।"
+                                        else -> "Could not accept this booking. Check the slot and try again."
+                                    }
+                                }
+                                incomingBusy = false
                             }
-                            hasSimulatedIncomingAlert = false
-                            hasActiveBooking = true
                         },
                         onReject = {
                             coroutineScope.launch {
@@ -299,6 +590,7 @@ fun PriestAppRoot() {
                                 )
                             }
                             hasSimulatedIncomingAlert = false
+                            activeBookingId = ""
                         }
                     )
                 }
@@ -334,6 +626,10 @@ fun PriestAppRoot() {
                 }
 
                 // 4. Language Selector Modal
+                if (showAppearance) {
+                    AppearanceDialog(appearance, currentLanguage, onDismiss = { showAppearance = false }, onSelect = { appearance = it; writeAppearance(it.name) })
+                }
+
                 if (showLanguageModal) {
                     AlertDialog(
                         onDismissRequest = { showLanguageModal = false },
@@ -380,11 +676,14 @@ fun PriestAppRoot() {
                     AlertDialog(
                         onDismissRequest = { showLogoutModal = false },
                         title = { Text(strings.common.logOutConfirmTitle, fontWeight = FontWeight.Bold) },
-                        text = { Text("Are you sure you want to log out of duty?") },
+                        text = { Text(strings.common.logOutConfirmDescription) },
                         confirmButton = {
                             Button(
                                 onClick = {
                                     showLogoutModal = false
+                                    DutyServiceController.stop()
+                                    PurohitApiClient.authToken = ""
+                                    PurohitApiClient.currentPriestProfile = null
                                     isRegistered = false
                                     currentScreen = PriestScreen.REGISTRATION
                                 },

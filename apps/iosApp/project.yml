@@ -1,0 +1,106 @@
+name: PujaVaahini
+options:
+  deploymentTarget:
+    iOS: "15.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    OTHER_LDFLAGS: ["$(inherited)", "-lsqlite3"]
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    # The Kotlin frameworks are built for the simulator/device you pick; no bitcode, no Rosetta needed.
+    ENABLE_BITCODE: NO
+
+# Shared Info.plist entries (XcodeGen deep-merges template dictionaries into each target). Every permission the apps can ask for has a purpose string,
+# because iOS terminates an app that requests a permission without one.
+targetTemplates:
+  KotlinHost:
+    type: application
+    platform: iOS
+    info:
+      properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        ITSAppUsesNonExemptEncryption: false
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        NSLocationWhenInUseUsageDescription: Your location is used to show nearby priests and ghats and to share the meeting point for your booking.
+        NSCameraUsageDescription: The camera is used for live E-Pooja video and for scanning QR codes.
+        NSMicrophoneUsageDescription: The microphone is used for live E-Pooja video and calls during your booking.
+        NSPhotoLibraryUsageDescription: Photos are used only when you choose a profile picture or document to upload.
+
+targets:
+  DevoteeApp:
+    templates: [KotlinHost]
+    sources: [DevoteeApp]
+    info:
+      path: DevoteeApp/Info.plist
+      properties:
+        CFBundleDisplayName: Pooja Vahini
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.purohit.devotee
+        FRAMEWORK_SEARCH_PATHS: ["$(inherited)", "$(SRCROOT)/../devotee-app/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)"]
+        OTHER_LDFLAGS: ["$(inherited)", "-framework", "DevoteeApp"]
+    preBuildScripts:
+      - name: Build Kotlin framework
+        basedOnDependencyAnalysis: false
+        script: |
+          set -e
+          cd "$SRCROOT/../.."
+          # Xcode does not inherit your shell profile; find JDK 17 explicitly.
+          export JAVA_HOME="${JAVA_HOME:-$(/usr/libexec/java_home -v 17 2>/dev/null || true)}"
+          if [ -z "$JAVA_HOME" ]; then echo "error: JDK 17 not found. Install it (see MAC_SETUP.md)."; exit 1; fi
+          /bin/sh ./gradlew :apps:devotee-app:embedAndSignAppleFrameworkForXcode
+    scheme: {}
+
+  PriestApp:
+    templates: [KotlinHost]
+    sources: [PriestApp]
+    info:
+      path: PriestApp/Info.plist
+      properties:
+        CFBundleDisplayName: Pooja Vahini Priest
+        NSLocationWhenInUseUsageDescription: While you are on duty your location is shared every 2 minutes so devotees at your ghat can find you.
+        NSLocationAlwaysAndWhenInUseUsageDescription: While you are on duty your location is shared every 2 minutes, even when the app is in the background, so devotees at your ghat can find you. Sharing stops when you end duty.
+        NSLocationAlwaysUsageDescription: While you are on duty your location is shared every 2 minutes so devotees at your ghat can find you. Sharing stops when you end duty.
+        UIBackgroundModes: [location]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.purohit.priest
+        FRAMEWORK_SEARCH_PATHS: ["$(inherited)", "$(SRCROOT)/../priest-app/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)"]
+        OTHER_LDFLAGS: ["$(inherited)", "-framework", "PriestApp"]
+    preBuildScripts:
+      - name: Build Kotlin framework
+        basedOnDependencyAnalysis: false
+        script: |
+          set -e
+          cd "$SRCROOT/../.."
+          export JAVA_HOME="${JAVA_HOME:-$(/usr/libexec/java_home -v 17 2>/dev/null || true)}"
+          if [ -z "$JAVA_HOME" ]; then echo "error: JDK 17 not found. Install it (see MAC_SETUP.md)."; exit 1; fi
+          /bin/sh ./gradlew :apps:priest-app:embedAndSignAppleFrameworkForXcode
+    scheme: {}
+
+  VendorApp:
+    templates: [KotlinHost]
+    sources: [VendorApp]
+    info:
+      path: VendorApp/Info.plist
+      properties:
+        CFBundleDisplayName: Pooja Vahini Vendor
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.purohit.vendor
+        FRAMEWORK_SEARCH_PATHS: ["$(inherited)", "$(SRCROOT)/../vendor-app/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)"]
+        OTHER_LDFLAGS: ["$(inherited)", "-framework", "VendorApp"]
+    preBuildScripts:
+      - name: Build Kotlin framework
+        basedOnDependencyAnalysis: false
+        script: |
+          set -e
+          cd "$SRCROOT/../.."
+          export JAVA_HOME="${JAVA_HOME:-$(/usr/libexec/java_home -v 17 2>/dev/null || true)}"
+          if [ -z "$JAVA_HOME" ]; then echo "error: JDK 17 not found. Install it (see MAC_SETUP.md)."; exit 1; fi
+          /bin/sh ./gradlew :apps:vendor-app:embedAndSignAppleFrameworkForXcode
+    scheme: {}

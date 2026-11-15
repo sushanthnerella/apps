@@ -51,7 +51,8 @@ def run_e2e_test(base_url):
     print("\n[TEST 2] POST /api/v1/auth/register-devotee (Consent Rejected Validation)...")
     payload_no_consent = {
         "full_name": "Test Devotee Without Consent",
-        "phone": "+91 99999 00001",
+        "phone": f"+91 99999 {int(time.time()) % 100000:05d}",
+        "password": "Password123",
         "gotram": "Bharadwaja",
         "nakshatram": "Pushya",
         "rashi": "Karkataka",
@@ -66,7 +67,8 @@ def run_e2e_test(base_url):
     print("\n[TEST 3] POST /api/v1/auth/register-devotee (Registration with Consent)...")
     payload_devotee = {
         "full_name": "Srikanth Sharma",
-        "phone": "+91 98480 12345",
+        "phone": f"+91 98480 {(int(time.time()) + 1) % 100000:05d}",
+        "password": "DevoteePassword123",
         "gotram": "Kashyapa",
         "nakshatram": "Rohini",
         "rashi": "Vrishabha",
@@ -76,13 +78,15 @@ def run_e2e_test(base_url):
     status, res = make_request(f"{base_url}/api/v1/auth/register-devotee", method="POST", data=payload_devotee)
     assert status == 200, f"Expected 200, got {status}: {res}"
     user_id = res.get("user_id")
+    devotee_token = res.get("access_token")
     print(f"  [OK] Devotee Registered! User ID: {user_id}, Name: {res.get('full_name')}")
 
     # 4. Priest Registration with Code of Conduct Consent
     print("\n[TEST 4] POST /api/v1/auth/register-priest (Priest Registration with Honor Code Consent)...")
     payload_priest = {
         "full_name": "Brahmasri Venkata Sharma Garu",
-        "phone": "+91 98765 43210",
+        "phone": f"+91 98765 {(int(time.time()) + 2) % 100000:05d}",
+        "password": "PriestPassword123",
         "sampradaya": "Smartha",
         "veda_shakha": "Rigveda Shakha",
         "experience_years": 18,
@@ -94,6 +98,7 @@ def run_e2e_test(base_url):
     status, res = make_request(f"{base_url}/api/v1/auth/register-priest", method="POST", data=payload_priest)
     assert status == 200, f"Expected 200, got {status}: {res}"
     priest_id = res.get("priest_id")
+    priest_token = res.get("access_token")
     print(f"  [OK] Priest Registered! Priest ID: {priest_id}, Sampradaya: {res.get('sampradaya')}")
 
     # 5. Fetch Pooja Catalog from Database
@@ -119,6 +124,7 @@ def run_e2e_test(base_url):
     print("\n[TEST 7] POST /api/v1/bookings (Create Escrow Booking with OTP)...")
     booking_req = {
         "user_id": user_id,
+        "priest_id": priest_id,
         "pooja_id": chosen_pooja.get("id"),
         "booking_type": "INSTANT_DISPATCH",
         "include_samagri_kit": True,
@@ -127,7 +133,7 @@ def run_e2e_test(base_url):
         "latitude": 17.3850,
         "longitude": 78.4867
     }
-    status, booking_res = make_request(f"{base_url}/api/v1/bookings", method="POST", data=booking_req)
+    status, booking_res = make_request(f"{base_url}/api/v1/bookings", method="POST", data=booking_req, custom_headers={"Authorization": f"Bearer {devotee_token}"})
     assert status == 200, f"Booking creation failed: {booking_res}"
     booking_id = booking_res.get("booking_id")
     otp = booking_res.get("completion_otp")
@@ -135,6 +141,13 @@ def run_e2e_test(base_url):
     print(f"     - Booking ID: {booking_id}")
     print(f"     - Escrow Status: {booking_res.get('escrow_status')}")
     print(f"     - Completion OTP: {otp}")
+
+    # Verify Task 05: Asymmetric OTP privacy & dedicated OTP route
+    status_detail, detail_res = make_request(f"{base_url}/api/v1/bookings/{booking_id}", custom_headers={"Authorization": f"Bearer {devotee_token}"})
+    assert status_detail == 200 and "completion_otp" not in detail_res, f"Expected completion_otp to be omitted from detail: {detail_res}"
+    status_otp, otp_res = make_request(f"{base_url}/api/v1/bookings/{booking_id}/otp", custom_headers={"Authorization": f"Bearer {devotee_token}"})
+    assert status_otp == 200 and otp_res.get("completion_otp") == otp, f"Expected matching OTP from protected route: {otp_res}"
+    print(f"  [OK] Task 05 Invariant Verified: OTP omitted from detail response and available exclusively via protected /otp route")
 
     # 8. Dispatch Match (Dynamic Rapido Ranking Scorer)
     print("\n[TEST 8] POST /api/v1/dispatch/match (Rapido Composite Scorer & Nearest Match)...")
@@ -153,39 +166,76 @@ def run_e2e_test(base_url):
     print(f"     - Best Match: {best_match.get('full_name')}")
     print(f"     - Score: {best_match.get('score')} | Distance: {best_match.get('distance_meters')}m | Rating: {best_match.get('rating_avg')} stars")
 
-    # 9. State Machine Transitions (IN_TRANSIT -> ARRIVED -> POOJA_STARTED)
+    # 9. State Machine Transitions (ACCEPTED -> IN_TRANSIT -> ARRIVED -> POOJA_STARTED)
     print("\n[TEST 9] State Transitions (Simulating in-app lifecycle)...")
-    for next_state in ["ACCEPTED", "IN_TRANSIT", "ARRIVED", "POOJA_STARTED"]:
+
+    # First verify negative authorization: another registered priest cannot accept or transition
+    other_priest_payload = {
+        "full_name": "Other Unassigned Priest",
+        "phone": f"+91 98765 {(int(time.time()) + 9) % 100000:05d}",
+        "password": "PriestPassword123",
+        "sampradaya": "Smartha",
+        "veda_shakha": "Rigveda",
+        "experience_years": 10,
+        "consent_agreed": True
+    }
+    st_other, res_other = make_request(f"{base_url}/api/v1/auth/register-priest", method="POST", data=other_priest_payload)
+    assert st_other == 200, f"Failed registering other priest: {res_other}"
+    other_priest_token = res_other.get("access_token")
+
+    # Priest registers/authenticates as assigned priest
+    # Priest accepts the booking
+    st_accept, res_accept = make_request(
+        f"{base_url}/api/v1/bookings/status",
+        method="POST",
+        data={"booking_id": booking_id, "status": "ACCEPTED", "priest_id": priest_id},
+        custom_headers={"Authorization": f"Bearer {priest_token}"}
+    )
+    assert st_accept == 200, f"Transition to ACCEPTED failed: {res_accept}"
+    print(f"  [OK] State Transition: -> ACCEPTED by assigned priest {priest_id}")
+
+    # Negative check: unassigned other priest receives 403 Forbidden
+    st_unassigned, res_unassigned = make_request(
+        f"{base_url}/api/v1/bookings/status",
+        method="POST",
+        data={"booking_id": booking_id, "status": "IN_TRANSIT", "priest_id": res_other.get("priest_id")},
+        custom_headers={"Authorization": f"Bearer {other_priest_token}"}
+    )
+    assert st_unassigned == 403, f"Expected 403 for unassigned priest, got {st_unassigned}: {res_unassigned}"
+    print(f"  [OK] Authorization Security: Unassigned priest correctly received 403 Forbidden")
+
+    # Lifecycle transitions by the legitimately assigned priest
+    for next_state in ["IN_TRANSIT", "ARRIVED", "POOJA_STARTED"]:
         status_req = {
             "booking_id": booking_id,
             "status": next_state,
-            "priest_id": best_match.get("id")
+            "priest_id": priest_id
         }
-        st, res = make_request(f"{base_url}/api/v1/bookings/status", method="POST", data=status_req)
+        st, res = make_request(f"{base_url}/api/v1/bookings/status", method="POST", data=status_req, custom_headers={"Authorization": f"Bearer {priest_token}"})
         assert st == 200, f"Transition to {next_state} failed: {res}"
         print(f"  [OK] State Transition: -> {next_state}")
 
     # 10. Complete Pooja & Escrow Release with OTP Validation
     print("\n[TEST 10] Complete Pooja with OTP Escrow Release...")
-    # First test with invalid OTP
+    # First test with invalid OTP (HTTP 409 Conflict per canonical specification)
     status_wrong_otp = {
         "booking_id": booking_id,
         "status": "COMPLETED",
         "completion_otp": "0000",
         "dakshina_amount": 501.0
     }
-    st, res = make_request(f"{base_url}/api/v1/bookings/status", method="POST", data=status_wrong_otp)
-    assert st == 400, f"Expected 400 for bad OTP, got {st}: {res}"
-    print(f"  [OK] Escrow Protection: Bad OTP successfully blocked release: {res.get('error')}")
+    st, res = make_request(f"{base_url}/api/v1/bookings/status", method="POST", data=status_wrong_otp, custom_headers={"Authorization": f"Bearer {priest_token}"})
+    assert st == 409, f"Expected 409 Conflict for bad OTP, got {st}: {res}"
+    print(f"  [OK] Escrow Protection: Bad OTP successfully blocked release with 409: {res.get('message', res.get('error'))}")
 
-    # Now test with correct OTP
+    # Now test with correct OTP via assigned priest
     status_correct_otp = {
         "booking_id": booking_id,
         "status": "COMPLETED",
         "completion_otp": otp,
         "dakshina_amount": 501.0
     }
-    st, res = make_request(f"{base_url}/api/v1/bookings/status", method="POST", data=status_correct_otp)
+    st, res = make_request(f"{base_url}/api/v1/bookings/status", method="POST", data=status_correct_otp, custom_headers={"Authorization": f"Bearer {priest_token}"})
     assert st == 200, f"Escrow release failed: {res}"
     print(f"  [OK] Pooja Completed & Escrow Released: {res.get('escrow_status')}")
 

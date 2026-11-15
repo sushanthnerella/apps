@@ -2,6 +2,13 @@ package com.purohit.priest.ui.dispatch
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -34,13 +41,21 @@ fun RapidoIncomingAlertModal(
     sankalpamPurpose: String = "Family Prosperity & Health",
     currentLanguage: AppLanguage = AppLanguage.TELUGU,
     strings: StringContract = LocalizationManager.getStrings(AppLanguage.TELUGU),
+    errorMessage: String? = null,
+    isSubmitting: Boolean = false,
     onAccept: () -> Unit,
     onReject: () -> Unit
 ) {
     var timeLeftSeconds by remember { mutableStateOf(45) }
     val isTelugu = currentLanguage == AppLanguage.TELUGU
     val isHindi = currentLanguage == AppLanguage.HINDI
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
 
+    LaunchedEffect(Unit) {
+        focusManager.clearFocus(force = true)
+        keyboard?.hide()
+    }
     LaunchedEffect(Unit) {
         while (timeLeftSeconds > 0) {
             delay(1000L)
@@ -62,7 +77,7 @@ fun RapidoIncomingAlertModal(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
         ) {
             Column(
-                modifier = Modifier.padding(20.dp),
+                modifier = Modifier.verticalScroll(rememberScrollState()).padding(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // Countdown Timer Ring
@@ -85,6 +100,7 @@ fun RapidoIncomingAlertModal(
 
                 Text(
                     text = strings.dispatch.incomingBookingAlert,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive },
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
@@ -159,30 +175,27 @@ fun RapidoIncomingAlertModal(
                 // Devotee and Address Card
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = Color(0xFFFEF3C7),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
+                        Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(
                                 "${if (isTelugu) "👤 యజమాని / భక్తుడు" else if (isHindi) "👤 यजमान / भक्त" else "👤 Devotee"}: $devoteeName",
                                 fontWeight = FontWeight.Bold,
                                 style = MaterialTheme.typography.titleSmall
                             )
-                            Text("📞 $devoteePhone", style = MaterialTheme.typography.bodySmall, color = Color(0xFF78350F))
+                            Text("📞 $devoteePhone", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = "📍 $eventAddress",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Color(0xFF78350F)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = "🛰️ GNSS: 17.3850° N, 78.4867° E (Dual L1+L5 RTK Locked)",
+                            text = if (isTelugu) "స్థాన భాగస్వామ్యం అందుబాటులో లేదు" else if (isHindi) "स्थान साझा करना उपलब्ध नहीं है" else "Location sharing is unavailable",
                             style = MaterialTheme.typography.labelSmall,
                             color = Color(0xFF15803D),
                             fontWeight = FontWeight.Bold
@@ -200,21 +213,19 @@ fun RapidoIncomingAlertModal(
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(strings.catalog.dakshinaLabel, style = MaterialTheme.typography.labelSmall)
                         Text("₹${dakshinaAmount.toInt()}", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge, color = Color(0xFF15803D))
-                        Text("Escrow Protected", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                        Text(if (isTelugu) "ఛార్జీలను భక్తునితో నిర్ధారించండి" else if (isHindi) "शुल्क की पुष्टि भक्त से करें" else "Confirm charges with devotee", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(if (isTelugu) "సామాగ్రి స్థితి" else if (isHindi) "सामग्री स्थिति" else "Samagri Status", style = MaterialTheme.typography.labelSmall)
-                        Text(
-                            if (isSamagriIncluded) (if (isTelugu) "🪔 కిట్ చేర్చబడింది" else if (isHindi) "🪔 किट शामिल" else "🪔 Kit Included")
-                            else (if (isTelugu) "గృహ ద్రవ్యాలు" else if (isHindi) "घर की सामग्री" else "Household Only"),
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.titleMedium,
-                            color = Color(0xFFB45309)
-                        )
-                        Text("+₹1,200 Purohit Samagri", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                        Text(if (isTelugu) "సామగ్రి" else if (isHindi) "सामग्री" else "Materials", style = MaterialTheme.typography.labelSmall)
+                        Text(if (isTelugu) "భక్తునితో నిర్ధారించండి" else if (isHindi) "भक्त से पुष्टि करें" else "Confirm with devotee", style = MaterialTheme.typography.bodySmall)
                     }
                 }
 
+                errorMessage?.let {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Assertive })
+                }
                 Spacer(modifier = Modifier.height(20.dp))
 
                 Row(
@@ -223,6 +234,7 @@ fun RapidoIncomingAlertModal(
                 ) {
                     OutlinedButton(
                         onClick = onReject,
+                        enabled = !isSubmitting,
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Red)
                     ) {
@@ -230,6 +242,7 @@ fun RapidoIncomingAlertModal(
                     }
                     Button(
                         onClick = onAccept,
+                        enabled = !isSubmitting,
                         modifier = Modifier.weight(1.5f),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF15803D))
                     ) {

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { apiFetch } from '../../lib/api';
 
 interface ServiceItem {
   id: string;
@@ -28,7 +29,7 @@ export default function ServicesTranslationPage() {
   const loadTranslations = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('http://localhost:8085/api/v1/services/translations');
+      const res = await apiFetch('/api/v1/services/translations');
       if (res.ok) {
         const data = await res.json();
         setServices(data || []);
@@ -54,7 +55,7 @@ export default function ServicesTranslationPage() {
   const saveTranslation = async (service: ServiceItem) => {
     setSavingId(service.id);
     try {
-      const res = await fetch('http://localhost:8085/api/v1/services/translations', {
+      const res = await apiFetch('/api/v1/services/translations', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -82,7 +83,7 @@ export default function ServicesTranslationPage() {
   const handleAutoTranslateAll = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('http://localhost:8085/api/v1/services/auto-translate', {
+      const res = await apiFetch('/api/v1/services/auto-translate', {
         method: 'POST',
       });
       if (res.ok) {

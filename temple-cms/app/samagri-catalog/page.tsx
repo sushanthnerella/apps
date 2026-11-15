@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { apiFetch } from '../../lib/api';
 
 interface SamagriItem {
   id: string;
@@ -37,9 +38,7 @@ export default function SamagriCatalogPage() {
   const fetchItems = async (poojaId: string) => {
     setIsLoading(true);
     try {
-      const res = await fetch(`http://localhost:8085/api/v1/poojas/${poojaId}/samagri`, {
-        headers: { 'ngrok-skip-browser-warning': '1' }
-      });
+      const res = await apiFetch(`/api/v1/poojas/${poojaId}/samagri`);
       const data = await res.json();
       setItems(Array.isArray(data) ? data : []);
     } catch (e) {
@@ -58,16 +57,17 @@ export default function SamagriCatalogPage() {
     if (!newItemName.trim()) return;
 
     try {
-      const res = await fetch(`http://localhost:8085/api/v1/poojas/${selectedPoojaId}/samagri`, {
+      const res = await apiFetch(`/api/v1/poojas/${selectedPoojaId}/samagri`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': '1' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           pooja_id: selectedPoojaId,
           item_name: newItemName,
           category: newItemCategory,
           quantity: newItemQuantity,
           is_mandatory: isMandatory,
-          estimated_price: Number(newItemPrice)
+          estimated_price: Number(newItemPrice),
+          estimated_price_minor: Math.round(Number(newItemPrice) * 100)
         })
       });
       if (res.ok) {
@@ -85,9 +85,8 @@ export default function SamagriCatalogPage() {
   const handleDeleteItem = async (itemId: string) => {
     if (!confirm('Are you sure you want to remove this item from the standard checklist?')) return;
     try {
-      const res = await fetch(`http://localhost:8085/api/v1/poojas/samagri/${itemId}`, {
+      const res = await apiFetch(`/api/v1/poojas/samagri/${itemId}`, {
         method: 'DELETE',
-        headers: { 'ngrok-skip-browser-warning': '1' }
       });
       if (res.ok) {
         fetchItems(selectedPoojaId);

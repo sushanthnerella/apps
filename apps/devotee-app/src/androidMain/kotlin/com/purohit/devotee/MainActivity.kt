@@ -19,19 +19,33 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppearanceStorage.context = applicationContext
+        com.purohit.devotee.network.PurohitApiClient.initializeSession(com.purohit.contracts.session.AndroidSessionVault(applicationContext))
 
         requestAppPermissions()
+        subscribeToEventConfigTopic()
 
         setContent {
             DevoteeAppRoot()
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        com.purohit.devotee.event.EventConfigStore.refreshIfStale()
+    }
+
+    private fun subscribeToEventConfigTopic() {
+        // ponytail: without Firebase config the app still refreshes on launch and resume.
+        try {
+            com.google.firebase.messaging.FirebaseMessaging.getInstance().subscribeToTopic("event-config")
+        } catch (e: Exception) {
+            android.util.Log.w("PoojaVahini", "event-config topic unavailable: ${e.message}")
+        }
+    }
+
     private fun requestAppPermissions() {
         val permissions = mutableListOf(
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION,
-            Manifest.permission.READ_CONTACTS,
             Manifest.permission.CAMERA,
             Manifest.permission.RECORD_AUDIO
         )

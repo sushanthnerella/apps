@@ -1,13 +1,27 @@
 'use client';
 
 import React, { useState } from 'react';
+import { apiFetch } from '../../lib/api';
 
 export default function GateScannerPage() {
-  const [qrInput, setQrInput] = useState('PV-TEMPLE-2026-11-03-28cdf85fd95c97bbed41c3c7739e15c3');
-  const [scanResult, setScanResult] = useState<any>(null);
+  const [qrInput, setQrInput] = useState('');
+  const [scanResult, setScanResult] = useState<{
+    valid: boolean;
+    devoteeName?: string;
+    gotram?: string;
+    status?: string;
+    timestamp?: string;
+    message: string;
+  } | null>(null);
   const [latencyMs, setLatencyMs] = useState<number | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
-  const [recentScans, setRecentScans] = useState<any[]>([]);
+  const [recentScans, setRecentScans] = useState<Array<{
+    name: string;
+    token: string;
+    latency: string;
+    time: string;
+    status: string;
+  }>>([]);
 
   const handleScan = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -17,10 +31,10 @@ export default function GateScannerPage() {
     const start = performance.now();
 
     try {
-      const res = await fetch('http://localhost:8085/api/v1/temples/tickets/verify', {
+      const res = await apiFetch('/api/v1/temples/tickets/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ qr_token: qrInput.trim() })
+        body: JSON.stringify({ qr_token: qrInput.trim() }),
       });
       const end = performance.now();
       const elapsed = Math.round((end - start) * 100) / 100;
@@ -28,41 +42,64 @@ export default function GateScannerPage() {
 
       if (res.ok) {
         const data = await res.json();
+        const devoteeName = data.ticket?.devotee_name || 'VIP Devotee';
+        const gotram = data.ticket?.devotee_gotram || '';
+        const status = data.ticket?.status || 'CHECKED_IN';
+        const timestamp = new Date().toLocaleTimeString();
+
         setScanResult({
           valid: true,
-          devoteeName: data.ticket?.devotee_name || 'Smt. Lakshmi Prasanna',
-          gotram: data.ticket?.devotee_gotram || 'Kashyapa',
-          status: 'CHECKED_IN',
-          timestamp: new Date().toLocaleTimeString(),
-          message: 'Zero-Lag Cryptographic Verification Successful'
+          devoteeName: data.ticket?.devotee_name,
+          gotram: data.ticket?.devotee_gotram,
+          status,
+          timestamp,
+          message: 'Verification successful. Admitted to sanctum.',
         });
-        setRecentScans(prev => [
-          { name: data.ticket?.devotee_name || 'Verified Devotee', token: qrInput, latency: `${elapsed}ms`, time: new Date().toLocaleTimeString() },
-          ...prev.slice(0, 9)
+
+        setRecentScans((prev) => [
+          {
+            name: devoteeName,
+            token: qrInput,
+            latency: `${elapsed}ms`,
+            time: timestamp,
+            status: 'ADMITTED',
+          },
+          ...prev.slice(0, 9),
         ]);
       } else {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({}));
         setScanResult({
           valid: false,
-          message: err.error || 'Invalid or duplicate QR pass'
+          message: err.message || err.error || 'Unable to verify, do not admit, retry',
         });
+        setRecentScans((prev) => [
+          {
+            name: 'Verification Failed',
+            token: qrInput,
+            latency: `${elapsed}ms`,
+            time: new Date().toLocaleTimeString(),
+            status: 'REJECTED',
+          },
+          ...prev.slice(0, 9),
+        ]);
       }
-    } catch (err: any) {
-      // Local Offline Verification Mode (Works inside thick stone temples)
+    } catch {
       const end = performance.now();
       const elapsed = Math.round((end - start) * 100) / 100;
       setLatencyMs(elapsed);
       setScanResult({
-        valid: true,
-        devoteeName: 'Smt. Lakshmi Prasanna (Offline Ed25519 Verified)',
-        gotram: 'Kashyapa',
-        status: 'CHECKED_IN_LOCAL',
-        timestamp: new Date().toLocaleTimeString(),
-        message: 'Verified Offline via Local Ed25519 Cryptographic Signature (< 50ms)'
+        valid: false,
+        message: 'Unable to verify, do not admit, retry',
       });
-      setRecentScans(prev => [
-        { name: 'Smt. Lakshmi Prasanna', token: qrInput, latency: `${elapsed}ms`, time: new Date().toLocaleTimeString() },
-        ...prev.slice(0, 9)
+      setRecentScans((prev) => [
+        {
+          name: 'Verification Error',
+          token: qrInput,
+          latency: `${elapsed}ms`,
+          time: new Date().toLocaleTimeString(),
+          status: 'ERROR',
+        },
+        ...prev.slice(0, 9),
       ]);
     } finally {
       setIsVerifying(false);
@@ -73,10 +110,10 @@ export default function GateScannerPage() {
     <div style={{ maxWidth: '800px' }}>
       <div style={{ marginBottom: '24px' }}>
         <h1 style={{ fontSize: '26px', fontWeight: 800, margin: '0 0 6px 0', color: '#1E293B' }}>
-          ⚡ Zero-Lag Sanctum Gate Scanner
+          ⚡ Sanctum VIP Gate Scanner
         </h1>
         <p style={{ margin: 0, color: '#64748B', fontSize: '14px' }}>
-          Validates Ed25519 signed VIP passes in &lt; 50ms. Fully operational inside offline stone corridors.
+          Real-time atomic verification and admittance control for temple VIP pooja tickets.
         </p>
       </div>
 
@@ -94,7 +131,7 @@ export default function GateScannerPage() {
               borderRadius: '8px',
               border: '2px solid #E2E8F0',
               fontSize: '15px',
-              fontFamily: 'monospace'
+              fontFamily: 'monospace',
             }}
           />
           <button
@@ -108,7 +145,7 @@ export default function GateScannerPage() {
               borderRadius: '8px',
               fontWeight: 700,
               fontSize: '15px',
-              cursor: 'pointer'
+              cursor: isVerifying ? 'not-allowed' : 'pointer',
             }}
           >
             {isVerifying ? 'Scanning...' : 'Verify Entry Scan'}
@@ -116,10 +153,10 @@ export default function GateScannerPage() {
         </form>
 
         {latencyMs !== null && (
-          <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: latencyMs < 50 ? '#059669' : '#D97706', fontWeight: 600 }}>
-            <span>⚡ Verification Latency:</span>
-            <span style={{ backgroundColor: latencyMs < 50 ? '#D1FAE5' : '#FEF3C7', padding: '2px 8px', borderRadius: '4px' }}>
-              {latencyMs} ms ({latencyMs < 50 ? 'Sub-50ms Offline Verified' : 'Standard Network Latency'})
+          <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#475569', fontWeight: 600 }}>
+            <span>Verification Latency:</span>
+            <span style={{ backgroundColor: '#F1F5F9', padding: '2px 8px', borderRadius: '4px' }}>
+              {latencyMs} ms
             </span>
           </div>
         )}
@@ -132,13 +169,13 @@ export default function GateScannerPage() {
           border: `2px solid ${scanResult.valid ? '#10B981' : '#EF4444'}`,
           borderRadius: '12px',
           padding: '24px',
-          marginBottom: '28px'
+          marginBottom: '28px',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
             <span style={{ fontSize: '28px' }}>{scanResult.valid ? '✅' : '❌'}</span>
             <div>
               <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: scanResult.valid ? '#065F46' : '#991B1B' }}>
-                {scanResult.valid ? 'ENTRY GRANTED - SANCTUM VIP PASS' : 'ENTRY REJECTED'}
+                {scanResult.valid ? 'ENTRY GRANTED - SANCTUM VIP PASS' : 'ENTRY REJECTED - DO NOT ADMIT'}
               </h3>
               <span style={{ fontSize: '13px', color: '#4B5563' }}>{scanResult.message}</span>
             </div>
@@ -146,18 +183,24 @@ export default function GateScannerPage() {
 
           {scanResult.valid && (
             <div style={{ marginTop: '16px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', backgroundColor: '#FFFFFF', padding: '16px', borderRadius: '8px' }}>
-              <div>
-                <span style={{ fontSize: '12px', color: '#6B7280' }}>Devotee Name:</span>
-                <div style={{ fontWeight: 700 }}>{scanResult.devoteeName}</div>
-              </div>
-              <div>
-                <span style={{ fontSize: '12px', color: '#6B7280' }}>Family Gotram:</span>
-                <div style={{ fontWeight: 700 }}>{scanResult.gotram}</div>
-              </div>
-              <div>
-                <span style={{ fontSize: '12px', color: '#6B7280' }}>Scanned At:</span>
-                <div style={{ fontWeight: 700, color: '#831843' }}>{scanResult.timestamp}</div>
-              </div>
+              {scanResult.devoteeName && (
+                <div>
+                  <span style={{ fontSize: '12px', color: '#6B7280' }}>Devotee Name:</span>
+                  <div style={{ fontWeight: 700 }}>{scanResult.devoteeName}</div>
+                </div>
+              )}
+              {scanResult.gotram && (
+                <div>
+                  <span style={{ fontSize: '12px', color: '#6B7280' }}>Family Gotram:</span>
+                  <div style={{ fontWeight: 700 }}>{scanResult.gotram}</div>
+                </div>
+              )}
+              {scanResult.timestamp && (
+                <div>
+                  <span style={{ fontSize: '12px', color: '#6B7280' }}>Scanned At:</span>
+                  <div style={{ fontWeight: 700, color: '#831843' }}>{scanResult.timestamp}</div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -174,6 +217,7 @@ export default function GateScannerPage() {
                 <th style={{ padding: '8px' }}>Token</th>
                 <th style={{ padding: '8px' }}>Latency</th>
                 <th style={{ padding: '8px' }}>Time</th>
+                <th style={{ padding: '8px' }}>Result</th>
               </tr>
             </thead>
             <tbody>
@@ -181,8 +225,9 @@ export default function GateScannerPage() {
                 <tr key={idx} style={{ borderBottom: '1px solid #F1F5F9' }}>
                   <td style={{ padding: '8px', fontWeight: 600 }}>{s.name}</td>
                   <td style={{ padding: '8px', fontFamily: 'monospace', color: '#475569' }}>{s.token.slice(0, 24)}...</td>
-                  <td style={{ padding: '8px', color: '#059669', fontWeight: 600 }}>{s.latency}</td>
+                  <td style={{ padding: '8px', color: '#475569', fontWeight: 600 }}>{s.latency}</td>
                   <td style={{ padding: '8px', color: '#64748B' }}>{s.time}</td>
+                  <td style={{ padding: '8px', fontWeight: 700, color: s.status === 'ADMITTED' ? '#15803D' : '#DC2626' }}>{s.status}</td>
                 </tr>
               ))}
             </tbody>

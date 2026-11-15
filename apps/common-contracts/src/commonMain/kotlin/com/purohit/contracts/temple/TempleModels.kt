@@ -26,6 +26,8 @@ data class TempleVipPuja(
     val title: String,
     val description: String = "",
     val price: Double,
+    val priceMinor: Long = 0L,
+    val currency: String = "INR",
     val maxDailySlots: Int = 20,
     val durationMinutes: Int = 45,
     val isOnlineVideoCall: Boolean = false,
@@ -48,6 +50,8 @@ data class TempleVipTicket(
     val qrToken: String,
     val status: String = "CONFIRMED", // 'CONFIRMED', 'CHECKED_IN', 'COMPLETED', 'CANCELLED'
     val amountPaid: Double,
+    val amountPaidMinor: Long = 0L,
+    val currency: String = "INR",
     val paymentMode: String = "ONLINE_ESCROW",
     val checkInTimestamp: String? = null,
     val createdAt: String = ""
@@ -66,6 +70,8 @@ data class BookTempleTicketRequest(
     val slotTime: String,
     val ticketType: String = "VIP_IN_PERSON",
     val amountPaid: Double,
+    val amountPaidMinor: Long = 0L,
+    val currency: String = "INR",
     val paymentMode: String = "ONLINE_ESCROW"
 )
 
