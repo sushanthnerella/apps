@@ -500,9 +500,6 @@ func (s *Storage) RegisterDevotee(req models.DevoteeRegistrationRequest) (string
 	}
 
 	city := strings.TrimSpace(req.City)
-	if city == "" {
-		city = "Hyderabad"
-	}
 
 	var id string
 	query := `
@@ -665,8 +662,8 @@ func (s *Storage) CreateBooking(req models.BookingCreateRequest) (string, string
 		return "", "", fmt.Errorf("invalid or non-existent user_id: %s", req.UserID)
 	}
 
-	if req.EventAddress == "" {
-		req.EventAddress = "Plot 42, Sri Rama Nagar, Madhav Nagar, Hyderabad (Landmark: Near Sri Rama Temple)"
+	if strings.TrimSpace(req.EventAddress) == "" {
+		return "", "", fmt.Errorf("event address is required")
 	}
 	if req.BookingType == "" {
 		req.BookingType = "INSTANT_DISPATCH"
@@ -1084,7 +1081,18 @@ func (s *Storage) UpdateBookingStatus(req models.BookingStatusUpdateRequest) (st
 			slotPriestID = req.PriestID
 		}
 
-		if slotPriestID != "" {
+		// A scheduled booking may already own a slot reserved at creation time.
+		// Lock and verify that exact reservation rather than guessing its time.
+		var reservedPriest string
+		var reservedBooked bool
+		reservedErr := tx.QueryRowContext(ctx, `SELECT priest_id::text, is_booked FROM priest_availability_slots WHERE booked_booking_id = $1::uuid FOR UPDATE`, req.BookingID).Scan(&reservedPriest, &reservedBooked)
+		if reservedErr != nil && !errors.Is(reservedErr, sql.ErrNoRows) {
+			return "", fmt.Errorf("failed to check reserved slot: %w", reservedErr)
+		}
+		if reservedErr == nil && (reservedPriest != slotPriestID || !reservedBooked) {
+			return "", fmt.Errorf("%w: reserved slot does not match the assigned priest", lifecycle.ErrSlotUnavailable)
+		}
+		if slotPriestID != "" && errors.Is(reservedErr, sql.ErrNoRows) {
 			slotDate := time.Now().Format("2006-01-02")
 			if scheduledDate != "" && scheduledDate != "Today" && len(scheduledDate) == 10 {
 				slotDate = scheduledDate

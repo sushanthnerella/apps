@@ -794,22 +794,10 @@ func buildGatewayRouter(storage *db.Storage, pushNotifier notify.PushNotifier) *
 	// 15. Local Puja Store Vendors & Inventory
 	router.HandleFunc("/api/v1/store/vendors", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		latStr := r.URL.Query().Get("lat")
-		lonStr := r.URL.Query().Get("lng")
-		radiusStr := r.URL.Query().Get("radius")
-
-		lat := 17.3850
-		lon := 78.4867
-		radius := 10000.0 // 10km default
-
-		if v, err := strconv.ParseFloat(latStr, 64); err == nil && v != 0 {
-			lat = v
-		}
-		if v, err := strconv.ParseFloat(lonStr, 64); err == nil && v != 0 {
-			lon = v
-		}
-		if v, err := strconv.ParseFloat(radiusStr, 64); err == nil && v != 0 {
-			radius = v
+		lat, lon, radius, err := parseVendorSearch(r.URL.Query())
+		if err != nil {
+			http.Error(w, `{"error":"valid location is required"}`, http.StatusBadRequest)
+			return
 		}
 
 		vendors, err := storage.GetNearbyVendors(lat, lon, radius)

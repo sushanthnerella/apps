@@ -149,3 +149,50 @@ func TestAppLayerUnknownPersonalAndScheduleFieldsRemainUnknown(t *testing.T) {
 		t.Errorf("expected empty SankalpamPurpose from GetBookings, got fabricated: %q", b.SankalpamPurpose)
 	}
 }
+
+// TestCreateBookingRequiresEventAddress proves that CreateBooking does not fabricate
+// a fallback Hyderabad address and strictly requires an event address.
+func TestCreateBookingRequiresEventAddress(t *testing.T) {
+	storage, _, _ := createIsolatedAuthTestDB(t)
+
+	devoteeID, err := storage.RegisterDevotee(models.DevoteeRegistrationRequest{
+		Phone:         "+919876543009",
+		FullName:      "Devotee Address Test",
+		ConsentAgreed: true,
+		Password:      "SecurePassword123!",
+	})
+	if err != nil {
+		t.Fatalf("failed registering devotee: %v", err)
+	}
+
+	catalog, err := storage.GetCatalog("", "", "en")
+	if err != nil || len(catalog) == 0 {
+		t.Fatalf("failed to get catalog: %v", err)
+	}
+	validPoojaID := catalog[0]["id"].(string)
+
+	// Attempt with empty EventAddress
+	_, _, err = storage.CreateBooking(models.BookingCreateRequest{
+		UserID:       devoteeID,
+		PoojaID:      validPoojaID,
+		EventAddress: "",
+		TotalAmount:  2500.0,
+	})
+	if err == nil {
+		t.Fatalf("expected CreateBooking with empty EventAddress to fail, but it succeeded")
+	}
+	if !strings.Contains(err.Error(), "event address is required") {
+		t.Errorf("expected 'event address is required' error, got: %v", err)
+	}
+
+	// Attempt with whitespace EventAddress
+	_, _, err = storage.CreateBooking(models.BookingCreateRequest{
+		UserID:       devoteeID,
+		PoojaID:      validPoojaID,
+		EventAddress: "   ",
+		TotalAmount:  2500.0,
+	})
+	if err == nil {
+		t.Fatalf("expected CreateBooking with whitespace EventAddress to fail, but it succeeded")
+	}
+}
