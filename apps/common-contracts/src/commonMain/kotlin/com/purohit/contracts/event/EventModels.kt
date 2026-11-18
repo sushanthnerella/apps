@@ -41,7 +41,10 @@ data class EventConfig(
 ) {
     val status: EventStatus get() = EventStatus.entries.firstOrNull { it.name == statusRaw } ?: EventStatus.UNKNOWN
 
-    /** The app shows event mode only while the server says the event is live. */
+    /** Priests can apply before activation; duty and devotee booking remain live-only. */
+    val isOpenForPriests: Boolean get() = isLive || status == EventStatus.SCHEDULED
+
+    /** The devotee app shows event mode only for a live event. */
     val isLive: Boolean get() = status == EventStatus.ACTIVE || status == EventStatus.PAUSED
 
     /** New requests are allowed only when ACTIVE and the CMS booking switch is on. The server enforces this too. */

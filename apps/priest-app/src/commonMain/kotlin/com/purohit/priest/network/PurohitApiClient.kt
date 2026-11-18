@@ -143,7 +143,8 @@ data class BookingDetailPayload(
     val devotee_rashi: String = "Vrishabha",
     val sankalpam_purpose: String = "Family Prosperity & Health",
     val chat_room_id: String = "",
-    val created_at: String = ""
+    val created_at: String = "",
+    val request_expires_at: String? = null
 )
 
 @Serializable
@@ -584,7 +585,7 @@ object PurohitApiClient {
     // ----- Event (Pushkaralu) -----
 
     suspend fun fetchEventConfig(): Result<EventConfig?> =
-        eventCall<EventConfigResponse> { it.get("$baseUrl/api/v1/events/config") }.map { it.event }
+        eventCall<EventConfigResponse> { it.get("$baseUrl/api/v1/priests/events/config") { header("Authorization", "Bearer $authToken") } }.map { it.event }
 
     suspend fun fetchParticipation(eventId: String): Result<Participation> = eventCall {
         it.get("$baseUrl/api/v1/events/$eventId/participation/me") { header("Authorization", "Bearer $authToken") }

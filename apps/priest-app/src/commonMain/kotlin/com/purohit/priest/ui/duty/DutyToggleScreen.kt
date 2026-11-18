@@ -101,9 +101,20 @@ fun DutyToggleScreen(
         }
     }
 
+    fun nextHiddenStep(current: String) = when (current) { "ACCEPTED" -> "IN_TRANSIT"; "IN_TRANSIT" -> "ARRIVED"; else -> "" }
+
     fun updateStatus(newStatus: String, otp: String? = null) {
         isUpdatingStatus = true
         coroutineScope.launch {
+            // Ghat bookings have no travel: the server still walks ACCEPTED → IN_TRANSIT → ARRIVED,
+            // so step through the skipped states before starting.
+            if (requiresCodeToStart && newStatus == "POOJA_STARTED") {
+                for (step in listOf("IN_TRANSIT", "ARRIVED").dropWhile { it != nextHiddenStep(bookingStatus) }) {
+                    val hop = PurohitApiClient.updateBookingStatus(bookingId = activeBookingId, status = step, priestId = priestId, otp = null)
+                    if (hop.isFailure) break
+                    bookingStatus = step
+                }
+            }
             val res = PurohitApiClient.updateBookingStatus(
                 bookingId = activeBookingId,
                 status = newStatus,
@@ -287,31 +298,35 @@ fun DutyToggleScreen(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Button(
-                            onClick = { updateStatus("IN_TRANSIT") },
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                            shape = RoundedCornerShape(8.dp),
-                            enabled = !isUpdatingStatus && bookingStatus != "IN_TRANSIT" && bookingStatus != "COMPLETED"
-                        ) {
-                            Text(if (isTelugu) "1. ప్రయాణం" else if (isHindi) "1. प्रस्थान" else "1. In Transit", style = MaterialTheme.typography.labelSmall)
-                        }
+                        // Only the next step is tappable; ghat bookings skip travel and arrival.
+                        if (!requiresCodeToStart) {
+                            Button(
+                                onClick = { updateStatus("IN_TRANSIT") },
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                enabled = !isUpdatingStatus && bookingStatus == "ACCEPTED"
+                            ) {
+                                Text(if (isTelugu) "1. ప్రయాణం" else if (isHindi) "1. प्रस्थान" else "1. In Transit", style = MaterialTheme.typography.labelSmall)
+                            }
 
-                        Button(
-                            onClick = { updateStatus("ARRIVED") },
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                            shape = RoundedCornerShape(8.dp),
-                            enabled = !isUpdatingStatus && bookingStatus == "IN_TRANSIT"
-                        ) {
-                            Text(if (isTelugu) "2. చేరిక" else if (isHindi) "2. आगमन" else "2. Arrived", style = MaterialTheme.typography.labelSmall)
+                            Button(
+                                onClick = { updateStatus("ARRIVED") },
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                enabled = !isUpdatingStatus && bookingStatus == "IN_TRANSIT"
+                            ) {
+                                Text(if (isTelugu) "2. చేరిక" else if (isHindi) "2. आगमन" else "2. Arrived", style = MaterialTheme.typography.labelSmall)
+                            }
                         }
 
                         Button(
                             onClick = { if (requiresCodeToStart) { codeForStart = true; enteredOtp = ""; showOtpDialog = true } else updateStatus("POOJA_STARTED") },
                             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                             shape = RoundedCornerShape(8.dp),
-                            enabled = !isUpdatingStatus && bookingStatus == "ARRIVED"
+                            enabled = !isUpdatingStatus && (bookingStatus == "ARRIVED" || (requiresCodeToStart && bookingStatus in setOf("ACCEPTED", "IN_TRANSIT")))
                         ) {
-                            Text(if (isTelugu) "3. పూజ మొదలు" else if (isHindi) "3. पूजा प्रारंभ" else "3. Start Puja", style = MaterialTheme.typography.labelSmall)
+                            val n = if (requiresCodeToStart) "1" else "3"
+                            Text(if (isTelugu) "$n. పూజ మొదలు" else if (isHindi) "$n. पूजा प्रारंभ" else "$n. Start Puja", style = MaterialTheme.typography.labelSmall)
                         }
 
                         Button(
@@ -321,7 +336,8 @@ fun DutyToggleScreen(
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF15803D)),
                             enabled = !isUpdatingStatus && bookingStatus == "POOJA_STARTED"
                         ) {
-                            Text(if (isTelugu) "4. సమాప్తం" else if (isHindi) "4. संपन्न" else "4. Complete", style = MaterialTheme.typography.labelSmall)
+                            val n = if (requiresCodeToStart) "2" else "4"
+                            Text(if (isTelugu) "$n. సమాప్తం" else if (isHindi) "$n. संपन्न" else "$n. Complete", style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 }
@@ -390,7 +406,8 @@ fun DutyToggleScreen(
             text = {
                 Column {
                     Text(
-                        text = tr("Ask the devotee for the 4-digit completion code after the pooja.", "పూజ తర్వాత భక్తుడిని 4 అంకెల పూర్తి కోడ్ అడగండి.", "पूजा के बाद भक्त से 4 अंकों का समापन कोड लें।"),
+                        text = if (codeForStart) tr("Ask the devotee for the 4-digit booking code shown in their app before you begin.", "ప్రారంభించే ముందు భక్తుని యాప్‌లో ఉన్న 4 అంకెల బుకింగ్ కోడ్ అడగండి.", "शुरू करने से पहले भक्त के ऐप में दिखा 4 अंकों का बुकिंग कोड लें।")
+                            else tr("Ask the devotee for the 4-digit completion code after the pooja.", "పూజ తర్వాత భక్తుడిని 4 అంకెల పూర్తి కోడ్ అడగండి.", "पूजा के बाद भक्त से 4 अंकों का समापन कोड लें।"),
                         style = MaterialTheme.typography.bodySmall
                     )
                     Spacer(modifier = Modifier.height(10.dp))
@@ -416,7 +433,7 @@ fun DutyToggleScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF15803D))
                 ) {
-                    Text(tr("Verify completion", "పూర్తిని నిర్ధారించండి", "समापन सत्यापित करें"))
+                    Text(if (codeForStart) tr("Verify and start", "నిర్ధారించి ప్రారంభించండి", "सत्यापित करें और शुरू करें") else tr("Verify completion", "పూర్తిని నిర్ధారించండి", "समापन सत्यापित करें"))
                 }
             },
             dismissButton = {

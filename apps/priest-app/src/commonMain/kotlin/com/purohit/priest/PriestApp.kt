@@ -75,6 +75,7 @@ fun PriestAppRoot() {
     var activeSankalpamPurpose by remember { mutableStateOf("") }
     var activeBookingStatus by remember { mutableStateOf("IN_TRANSIT") }
     var activeBookingType by remember { mutableStateOf("") }
+    var activeRequestExpiresAt by remember { mutableStateOf<String?>(null) }
     var eventConfig by remember { mutableStateOf<com.purohit.contracts.event.EventConfig?>(null) }
 
     var hasSimulatedIncomingAlert by remember { mutableStateOf(false) }
@@ -90,7 +91,8 @@ fun PriestAppRoot() {
     var isNetworkError by remember { mutableStateOf(false) }
     var networkErrorMessage by remember { mutableStateOf("") }
 
-    var currentLanguage by rememberSaveable { mutableStateOf(AppLanguage.TELUGU) } // Default Telugu for priests
+    // Follow the phone language when the app supports it; Telugu stays the default for other languages.
+    var currentLanguage by rememberSaveable { mutableStateOf(when (androidx.compose.ui.text.intl.Locale.current.language) { "en" -> AppLanguage.ENGLISH; "hi" -> AppLanguage.HINDI; else -> AppLanguage.TELUGU }) }
     val strings = remember(currentLanguage) { LocalizationManager.getStrings(currentLanguage) }
 
     val coroutineScope = rememberCoroutineScope()
@@ -168,6 +170,7 @@ fun PriestAppRoot() {
                             activeSankalpamPurpose = incoming.sankalpam_purpose
                             activeChatRoomId = incoming.chat_room_id
                             activeBookingType = incoming.booking_type
+                            activeRequestExpiresAt = incoming.request_expires_at
                             hasSimulatedIncomingAlert = true
                         }
                     }
@@ -245,7 +248,7 @@ fun PriestAppRoot() {
                                     label = { Text(strings.common.tabCustomServices) },
                                     icon = { Text("📋") }
                                 )
-                                if (eventConfig?.isLive == true || currentScreen == PriestScreen.PUSHKARALU) NavigationBarItem(
+                                if (eventConfig?.isOpenForPriests == true || currentScreen == PriestScreen.PUSHKARALU) NavigationBarItem(
                                     selected = currentScreen == PriestScreen.PUSHKARALU,
                                     onClick = { currentScreen = PriestScreen.PUSHKARALU },
                                     label = { Text(strings.event.tabEvent) },
@@ -553,6 +556,8 @@ fun PriestAppRoot() {
                         devoteeNakshatram = activeDevoteeNakshatram,
                         devoteeRashi = activeDevoteeRashi,
                         sankalpamPurpose = activeSankalpamPurpose,
+                        expiresAt = activeRequestExpiresAt,
+                        onExpired = { hasSimulatedIncomingAlert = false; activeBookingId = "" },
                         currentLanguage = currentLanguage,
                         strings = strings,
                         errorMessage = incomingError,

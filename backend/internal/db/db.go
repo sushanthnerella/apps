@@ -900,7 +900,7 @@ func (s *Storage) GetBookings(priestID, userID, status string) ([]models.Booking
 			COALESCE(b.scheduled_date, ''), COALESCE(b.slot_time, ''),
 			COALESCE(b.devotee_gotram, u.gotram, ''), COALESCE(b.devotee_nakshatram, u.nakshatram, ''),
 			COALESCE(b.devotee_rashi, u.rashi, ''), COALESCE(b.sankalpam_purpose, ''),
-			COALESCE(cr.id::text, ''), b.created_at
+			COALESCE(cr.id::text, ''), b.created_at, b.request_expires_at
 		FROM bookings b
 		JOIN users u ON b.user_id = u.id
 		LEFT JOIN priests p ON b.priest_id = p.id
@@ -954,7 +954,7 @@ func (s *Storage) GetBookings(priestID, userID, status string) ([]models.Booking
 			&res.CompletionOTP, &res.EventAddress, &res.Latitude, &res.Longitude,
 			&res.ScheduledDate, &res.SlotTime,
 			&res.DevoteeGotram, &res.DevoteeNakshatram, &res.DevoteeRashi, &res.SankalpamPurpose,
-			&res.ChatRoomID, &res.CreatedAt,
+			&res.ChatRoomID, &res.CreatedAt, &res.RequestExpiresAt,
 		); err != nil {
 			continue
 		}
@@ -1095,8 +1095,9 @@ func (s *Storage) UpdateBookingStatus(req models.BookingStatusUpdateRequest) (st
 		}
 	}
 
+	// Event bookings use scheduled_at and their frozen ritual duration, not legacy fixed slots.
 	// 4. Slot Verification and Atomic Handling on Transitions
-	if req.Status == "ACCEPTED" {
+	if req.Status == "ACCEPTED" && eventIDVal == "" {
 		slotPriestID := currentPID
 		if slotPriestID == "" {
 			slotPriestID = callerID

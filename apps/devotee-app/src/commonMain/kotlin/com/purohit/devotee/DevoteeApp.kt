@@ -114,11 +114,20 @@ fun DevoteeAppRoot() {
 
     LaunchedEffect(Unit) {
         EventConfigStore.refreshIfStale()
-        if (PurohitApiClient.authToken.isNotBlank()) {
-            PurohitApiClient.fetchProfile().onSuccess {
+        // A blip (slow network, server busy) must not log the devotee out: retry while the
+        // token is still held. fetchProfile clears the token only on a real 401.
+        var attempt = 0
+        while (PurohitApiClient.authToken.isNotBlank() && !isAuthenticated) {
+            val result = PurohitApiClient.fetchProfile()
+            if (result.isSuccess) {
                 isAuthenticated = true
                 currentScreen = DevoteeScreen.SERVICES
-            }.onFailure { restorationError = it.message }
+            } else if (PurohitApiClient.authToken.isNotBlank() && ++attempt < 4) {
+                kotlinx.coroutines.delay(2000L * attempt)
+            } else {
+                restorationError = result.exceptionOrNull()?.message
+                break
+            }
         }
     }
 

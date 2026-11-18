@@ -49,3 +49,5 @@ backend/vendor/
 /output/
 # Local AI agent scratch notes
 /.agents/
+
+.staging-test-devotee.env

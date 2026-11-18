@@ -44,6 +44,17 @@ func registerEventRoutes(router *mux.Router, storage *db.Storage, push notify.Pu
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"event": event})
 	}).Methods(http.MethodGet)
 
+	router.HandleFunc("/api/v1/priests/events/config", requireRole(storage, "priest")(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		event, err := storage.GetPriestEventConfig(r.Context())
+		if err != nil {
+			writeEventError(w, err)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"event": event})
+	})).Methods(http.MethodGet)
+
 	admin := func(h http.HandlerFunc) http.HandlerFunc { return requireRole(storage, "admin")(h) }
 
 	router.HandleFunc("/api/v1/admin/events", admin(func(w http.ResponseWriter, r *http.Request) {

@@ -86,6 +86,22 @@ func (s *Storage) GetLiveEventConfig(ctx context.Context) (*models.Event, error)
 	return e, nil
 }
 
+// GetPriestEventConfig prefers the live event, then the earliest scheduled event.
+// Public devotee config remains live-only.
+func (s *Storage) GetPriestEventConfig(ctx context.Context) (*models.Event, error) {
+	e, err := scanEvent(s.DB.QueryRowContext(ctx, `SELECT `+eventColumns+` FROM events
+ WHERE status IN ('ACTIVE','PAUSED','SCHEDULED')
+ ORDER BY CASE WHEN status IN ('ACTIVE','PAUSED') THEN 0 ELSE 1 END, starts_at, id LIMIT 1`))
+	if errors.Is(err, ErrEventNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	e.Ghats, err = loadGhats(ctx, s.DB, e.ID, true)
+	return e, err
+}
+
 // ListEvents returns every event with all of its ghats, newest first.
 func (s *Storage) ListEvents(ctx context.Context) ([]models.Event, error) {
 	rows, err := s.DB.QueryContext(ctx, `SELECT `+eventColumns+` FROM events ORDER BY starts_at DESC`)
@@ -334,7 +350,7 @@ func (s *Storage) UpdateGhat(ctx context.Context, eventID, ghatID string, req mo
 	return &g, tx.Commit()
 }
 
-// ListEventAudit returns recent audit rows for an event and its ghats.
+// ListEventAudit returns event, ghat, ritual and participation changes for this event.
 func (s *Storage) ListEventAudit(ctx context.Context, eventID string, limit int) ([]models.AuditEntry, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -344,6 +360,8 @@ func (s *Storage) ListEventAudit(ctx context.Context, eventID string, limit int)
 		FROM audit_log a
 		WHERE (a.entity_type = 'event' AND a.entity_id = $1)
 		   OR (a.entity_type = 'ghat' AND a.entity_id IN (SELECT id::text FROM ghats WHERE event_id = $1::uuid))
+           OR (a.entity_type = 'ritual' AND a.entity_id IN (SELECT id::text FROM event_rituals WHERE event_id = $1::uuid))
+           OR (a.entity_type = 'participation' AND split_part(a.entity_id, ':', 1) = $1)
 		ORDER BY a.created_at DESC, a.id DESC LIMIT $2`, eventID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list audit: %w", err)

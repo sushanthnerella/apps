@@ -618,15 +618,21 @@ func checkEventTransition(ctx context.Context, tx *sql.Tx, req models.BookingSta
 		if expiresAt.Valid && time.Now().After(expiresAt.Time) {
 			return ErrRequestExpired
 		}
-		if bookingType == models.BookingTypeEventNow && priestID != "" {
+		if priestID != "" {
 			// Serialise accepts per priest, then make sure no other ritual is live.
 			if _, err := tx.ExecContext(ctx, `SELECT 1 FROM priests WHERE id = $1::uuid FOR UPDATE`, priestID); err != nil {
 				return err
 			}
 			var busy bool
 			if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM bookings WHERE priest_id = $1::uuid AND id <> $2::uuid
-				AND booking_type = $3 AND status IN ('ACCEPTED','IN_TRANSIT','ARRIVED','POOJA_STARTED'))`,
-				priestID, req.BookingID, models.BookingTypeEventNow).Scan(&busy); err != nil {
+				AND event_id IS NOT NULL AND status IN ('ACCEPTED','IN_TRANSIT','ARRIVED','POOJA_STARTED')
+                AND (
+                    ($3 = 'EVENT_NOW' AND booking_type = 'EVENT_NOW')
+                    OR EXISTS (SELECT 1 FROM bookings requested WHERE requested.id = $2::uuid
+                        AND bookings.scheduled_at < requested.scheduled_at + make_interval(mins => (requested.agreement_snapshot->>'duration_minutes')::int)
+                        AND requested.scheduled_at < bookings.scheduled_at + make_interval(mins => (bookings.agreement_snapshot->>'duration_minutes')::int))
+                ))`,
+				priestID, req.BookingID, bookingType).Scan(&busy); err != nil {
 				return err
 			}
 			if busy {

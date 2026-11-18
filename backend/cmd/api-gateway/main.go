@@ -41,7 +41,7 @@ func validateOptionalCallerSession(r *http.Request, storage *db.Storage) (*auth.
 	}
 	dbVersion, err := storage.GetUserSessionVersion(claims.UserID, claims.Role)
 	if err != nil {
-		return nil, fmt.Errorf("session lookup failed: %w", err)
+		return nil, sessionLookupError(err)
 	}
 	if err := auth.ValidateSessionVersion(claims.SessionVersion, dbVersion); err != nil {
 		return nil, err
@@ -251,9 +251,14 @@ func buildGatewayRouter(storage *db.Storage, pushNotifier notify.PushNotifier) *
 		}
 
 		// Validate token session version against current database state
+		const revokedBody = `{"error":"session_revoked","message":"Session has been revoked or expired. Please log in again."}`
 		dbVersion, err := storage.GetUserSessionVersion(claims.UserID, claims.Role)
-		if err != nil || auth.ValidateSessionVersion(claims.SessionVersion, dbVersion) != nil {
-			http.Error(w, `{"error":"session_revoked","message":"Session has been revoked or expired. Please log in again."}`, http.StatusUnauthorized)
+		if err != nil {
+			writeSessionError(w, sessionLookupError(err), revokedBody)
+			return
+		}
+		if auth.ValidateSessionVersion(claims.SessionVersion, dbVersion) != nil {
+			http.Error(w, revokedBody, http.StatusUnauthorized)
 			return
 		}
 

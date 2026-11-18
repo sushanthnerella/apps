@@ -36,11 +36,8 @@ func requireRole(storage *db.Storage, allowedRoles ...string) func(http.HandlerF
 			w.Header().Set("Content-Type", "application/json")
 			claims, err := requireCallerSession(r, storage)
 			if err != nil {
-				w.WriteHeader(http.StatusUnauthorized)
-				json.NewEncoder(w).Encode(map[string]string{
-					"error":   "unauthorized",
-					"message": err.Error(),
-				})
+				body, _ := json.Marshal(map[string]string{"error": "unauthorized", "message": err.Error()})
+				writeSessionError(w, err, string(body))
 				return
 			}
 
