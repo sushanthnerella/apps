@@ -19,6 +19,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppearanceStorage.context = applicationContext
+        com.purohit.priest.location.DutyServiceController.initialize(this)
+        com.purohit.priest.network.PurohitApiClient.initializeSession(com.purohit.contracts.session.AndroidSessionVault(applicationContext))
 
         requestAppPermissions()
 
@@ -29,9 +32,6 @@ class MainActivity : ComponentActivity() {
 
     private fun requestAppPermissions() {
         val permissions = mutableListOf(
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION,
-            Manifest.permission.READ_CONTACTS,
             Manifest.permission.CAMERA,
             Manifest.permission.RECORD_AUDIO
         )

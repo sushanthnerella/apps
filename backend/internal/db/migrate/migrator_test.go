@@ -928,13 +928,23 @@ func TestValidExistingDataSurvivesUpgrade(t *testing.T) {
 		t.Fatalf("Baseline failed: %v", err)
 	}
 
-	// Apply forward migrations 000004, 000005, 000006, 000007
+	// Apply all migrations after the baseline.
 	applied, err := migrator.Up(ctx, false)
 	if err != nil {
 		t.Fatalf("Up failed: %v", err)
 	}
-	if applied != 13 {
-		t.Errorf("expected 13 migrations applied (000004 through 000016), got %d", applied)
+	migrationFiles, err := migrator.LoadMigrationFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := 0
+	for _, file := range migrationFiles {
+		if file.Version > "000003" {
+			expected++
+		}
+	}
+	if applied != expected {
+		t.Errorf("expected %d forward migrations, got %d", expected, applied)
 	}
 
 	// Verify all pre-existing records survive intact
@@ -1326,7 +1336,7 @@ func TestStartupReadinessValidSchema(t *testing.T) {
 	}
 }
 
-// 23. Acceptance Test: Startup readiness rejects history gap even when latest version 000008 is present
+// 23. Acceptance Test: Startup readiness rejects a gap even when the latest version is present
 func TestStartupReadinessHistoryGapFailsDespiteLatestVersion(t *testing.T) {
 	db, _ := createIsolatedTestDB(t)
 	ctx := context.Background()
@@ -1343,11 +1353,16 @@ func TestStartupReadinessHistoryGapFailsDespiteLatestVersion(t *testing.T) {
 		t.Fatalf("failed deleting migration: %v", err)
 	}
 
-	// Latest version in schema_migrations is 000008, but intermediate version 000004 is missing
+	// The latest migration is present, but intermediate version 000004 is missing.
 	var maxVer string
 	_ = db.QueryRowContext(ctx, "SELECT MAX(version) FROM schema_migrations").Scan(&maxVer)
-	if maxVer != "000016" {
-		t.Fatalf("expected max version to be 000016, got %s", maxVer)
+	files, err := migrator.LoadMigrationFiles()
+	if err != nil || len(files) == 0 {
+		t.Fatalf("load migrations: %v", err)
+	}
+	latest := files[len(files)-1].Version
+	if maxVer != latest {
+		t.Fatalf("expected max version %s, got %s", latest, maxVer)
 	}
 
 	err = migrator.VerifyReadiness(ctx, "000008")

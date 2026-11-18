@@ -852,7 +852,7 @@ func (s *Storage) GetBookingDetails(bookingID string) (*models.BookingDetailResp
 			b.id, b.user_id, COALESCE(b.priest_id::text, ''), 
 			COALESCE(u.full_name, ''), COALESCE(u.phone, ''),
 			COALESCE(p.full_name, ''), COALESCE(p.phone, ''),
-			COALESCE(pc.title, ''),
+			COALESCE(pc.title, er.name, ''),
 			b.booking_type, b.status, b.escrow_status, b.total_amount, b.include_samagri_kit,
 			b.completion_otp, COALESCE(b.event_address, ''), b.latitude, b.longitude,
 			COALESCE(b.scheduled_date, ''), COALESCE(b.slot_time, ''),
@@ -863,6 +863,8 @@ func (s *Storage) GetBookingDetails(bookingID string) (*models.BookingDetailResp
 		LEFT JOIN users u ON b.user_id = u.id
 		LEFT JOIN priests p ON b.priest_id = p.id
 		LEFT JOIN pooja_catalog pc ON b.pooja_id = pc.id
+		LEFT JOIN event_priest_services eps ON eps.id = b.event_service_id
+		LEFT JOIN event_rituals er ON er.id = eps.ritual_id
 		LEFT JOIN chat_rooms cr ON cr.booking_id = b.id
 		WHERE b.id = $1;
 	`
@@ -891,7 +893,7 @@ func (s *Storage) GetBookings(priestID, userID, status string) ([]models.Booking
 			b.id, b.user_id, COALESCE(b.priest_id::text, ''), 
 			COALESCE(u.full_name, ''), COALESCE(u.phone, ''),
 			COALESCE(p.full_name, ''), COALESCE(p.phone, ''),
-			COALESCE(pc.title, cs.title, ''),
+			COALESCE(pc.title, cs.title, er.name, ''),
 			b.booking_type, b.status, b.escrow_status, b.total_amount, b.include_samagri_kit,
 			b.completion_otp, COALESCE(b.event_address, ''),
 			b.latitude, b.longitude,
@@ -904,6 +906,8 @@ func (s *Storage) GetBookings(priestID, userID, status string) ([]models.Booking
 		LEFT JOIN priests p ON b.priest_id = p.id
 		LEFT JOIN pooja_catalog pc ON b.pooja_id = pc.id
 		LEFT JOIN priest_custom_services cs ON b.pooja_id = cs.id
+		LEFT JOIN event_priest_services eps ON eps.id = b.event_service_id
+		LEFT JOIN event_rituals er ON er.id = eps.ritual_id
 		LEFT JOIN chat_rooms cr ON cr.booking_id = b.id
 		WHERE 1=1
 	`
@@ -993,11 +997,15 @@ func (s *Storage) UpdateBookingStatus(req models.BookingStatusUpdateRequest) (st
 			COALESCE(scheduled_date, 'Today'), 
 			COALESCE(slot_time, '09:00 AM'), 
 			escrow_status,
-			COALESCE(dakshina_amount, 0.0), completion_otp_attempts
-		FROM bookings 
-		WHERE id = $1 
+			COALESCE(dakshina_amount, 0.0), completion_otp_attempts,
+			COALESCE(event_id::text, ''), request_expires_at, booking_type
+		FROM bookings
+		WHERE id = $1
 		FOR UPDATE
 	`
+	var eventIDVal string
+	var requestExpiresAt sql.NullTime
+	var bookingType string
 	err = tx.QueryRowContext(ctx, lockQuery, req.BookingID).Scan(
 		&currentUID,
 		&currentPIDVal,
@@ -1008,6 +1016,9 @@ func (s *Storage) UpdateBookingStatus(req models.BookingStatusUpdateRequest) (st
 		&currentEscrow,
 		&currentDakshina,
 		&otpAttempts,
+		&eventIDVal,
+		&requestExpiresAt,
+		&bookingType,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1071,8 +1082,22 @@ func (s *Storage) UpdateBookingStatus(req models.BookingStatusUpdateRequest) (st
 		return "", validationErr
 	}
 
+	// Event (ghat) bookings: expiry, one live ritual per priest, and booking code before the ritual starts.
+	if eventIDVal != "" {
+		if err := checkEventTransition(ctx, tx, req, actingPriestID, bookingType, expectedOTP, otpAttempts, requestExpiresAt); err != nil {
+			if errors.Is(err, errWrongBookingCode) { // keep the attempt counter increment
+				if cerr := tx.Commit(); cerr != nil {
+					return "", cerr
+				}
+				return "", lifecycle.ErrInvalidOTP
+			}
+			return "", err
+		}
+	}
+
+	// Event bookings use scheduled_at and their frozen ritual duration, not legacy fixed slots.
 	// 4. Slot Verification and Atomic Handling on Transitions
-	if req.Status == "ACCEPTED" {
+	if req.Status == "ACCEPTED" && eventIDVal == "" {
 		slotPriestID := currentPID
 		if slotPriestID == "" {
 			slotPriestID = callerID

@@ -110,6 +110,7 @@ func main() {
 
 	router := buildGatewayRouter(storage, pushNotifier)
 	handler := enableCORS(router)
+	startEventRequestExpiry(context.Background(), storage)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -524,6 +525,8 @@ func buildGatewayRouter(storage *db.Storage, pushNotifier notify.PushNotifier) *
 	// 9. Protected Booking Lifecycle, Asymmetric Completion OTP & Admin Emergency Cancel Routes (Task 06)
 	registerBookingRoutes(router, storage, pushNotifier)
 	registerDutyRoutes(router, storage)
+	registerEventRoutes(router, storage, pushNotifier)
+	registerEventOpsRoutes(router, storage, pushNotifier)
 	registerPriestLocationRoutes(router, storage)
 
 	// 11. WebRTC Signaling WebSocket

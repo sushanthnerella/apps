@@ -23,6 +23,7 @@ fun RequiredItemsModal(
 ) {
     var items by remember { mutableStateOf<List<SamagriItemPayload>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
+    var loadError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(poojaId) {
         isLoading = true
@@ -31,21 +32,8 @@ fun RequiredItemsModal(
         res.onSuccess { list ->
             items = list
         }.onFailure {
-            // Fallback default list
-            items = listOf(
-                SamagriItemPayload(item_name = "Brass / Copper Puja Plates (Thalis)", category = "Devotee Household Items", quantity = "3 nos"),
-                SamagriItemPayload(item_name = "Brass Panchapatra & Udharani", category = "Devotee Household Items", quantity = "1 set"),
-                SamagriItemPayload(item_name = "Brass Deepam / Diyas & Pure Cow Ghee", category = "Devotee Household Items", quantity = "2 nos, 500g"),
-                SamagriItemPayload(item_name = "Matchbox & Cotton Wicks (Vattulu)", category = "Devotee Household Items", quantity = "1 pack"),
-                SamagriItemPayload(item_name = "Sitting Mats (Asanam)", category = "Devotee Household Items", quantity = "3 nos"),
-                SamagriItemPayload(item_name = "Fresh Fruits (Bananas, etc.) & Flowers", category = "Devotee Household Items", quantity = "Variety, 1 garland"),
-                SamagriItemPayload(item_name = "Fresh Betel Leaves & Supari (Tamalapakulu)", category = "Devotee Household Items", quantity = "25 leaves"),
-                SamagriItemPayload(item_name = "Haldi (Pasupu) & Kumkuma", category = "Sacred Ritual Samagri", quantity = "100g each"),
-                SamagriItemPayload(item_name = "Akshatulu & Gandham Paste", category = "Sacred Ritual Samagri", quantity = "1 box"),
-                SamagriItemPayload(item_name = "Dhoop Cones & Karpooram (Camphor)", category = "Sacred Ritual Samagri", quantity = "1 pack"),
-                SamagriItemPayload(item_name = "Navadhanya Kit (9 Sacred Cosmic Grains)", category = "Sacred Ritual Samagri", quantity = "1 kit"),
-                SamagriItemPayload(item_name = "Homa Samidhalu & Purnahuti Dry Coconut", category = "Sacred Ritual Samagri", quantity = "2 bundles, 2 nos")
-            )
+            items = emptyList()
+            loadError = "Could not load required items. Please try again."
         }
     }
 
@@ -65,7 +53,7 @@ fun RequiredItemsModal(
                 Text(
                     text = poojaTitle,
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         },
@@ -74,6 +62,8 @@ fun RequiredItemsModal(
                 Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
+            } else if (loadError != null) {
+                Text(loadError!!, color = MaterialTheme.colorScheme.error)
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
@@ -83,12 +73,12 @@ fun RequiredItemsModal(
                     item {
                         Surface(
                             shape = RoundedCornerShape(10.dp),
-                            color = Color(0xFFFEF3C7)
+                            color = MaterialTheme.colorScheme.surfaceVariant
                         ) {
                             Text(
                                 text = "💡 Guidance: Household essentials (plates, deepam, mats, fruits) should be kept ready at home. When you include '+Samagri', the Purohit brings all Consecrated Vedic items.",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = Color(0xFF78350F),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(10.dp)
                             )
                         }
@@ -100,14 +90,14 @@ fun RequiredItemsModal(
                             text = "🏡 Items to Arrange at Home (${householdItems.size}):",
                             fontWeight = FontWeight.Bold,
                             style = MaterialTheme.typography.titleSmall,
-                            color = Color(0xFFB45309)
+                            color = MaterialTheme.colorScheme.primary
                         )
                     }
 
                     items(householdItems) { item ->
                         Surface(
                             shape = RoundedCornerShape(8.dp),
-                            color = Color(0xFFFFFBEB),
+                            color = MaterialTheme.colorScheme.background,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Row(
@@ -124,7 +114,7 @@ fun RequiredItemsModal(
                                 Text(
                                     text = item.quantity,
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = Color(0xFFB45309),
+                                    color = MaterialTheme.colorScheme.primary,
                                     fontWeight = FontWeight.Bold
                                 )
                             }

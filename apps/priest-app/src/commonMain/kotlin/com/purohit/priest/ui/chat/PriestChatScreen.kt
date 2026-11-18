@@ -12,6 +12,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import com.purohit.contracts.i18n.AppLanguage
+import com.purohit.priest.LocalPriestLanguage
+import com.purohit.priest.motionAllowed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -24,39 +29,39 @@ import kotlinx.coroutines.launch
 @Composable
 fun PriestChatScreen(
     roomId: String,
-    priestId: String = "6e7d277c-4ee2-469f-96ac-331517389762",
-    devoteeName: String = "Sushanth2",
-    devoteePhone: String = "9177961089",
-    eventAddress: String = "Plot 42, Sri Rama Nagar, Madhav Nagar, Hyderabad",
+    priestId: String = "",
+    devoteeName: String = "",
+    devoteePhone: String = "",
+    eventAddress: String = "",
     initialPrefillText: String = "",
     onBack: () -> Unit
 ) {
     var messages by remember { mutableStateOf<List<ChatMessagePayload>>(emptyList()) }
     var inputText by remember { mutableStateOf(initialPrefillText) }
     var isSending by remember { mutableStateOf(false) }
+    val language = LocalPriestLanguage.current
+    val backLabel = when (language) { AppLanguage.TELUGU -> "వెనుకకు"; AppLanguage.HINDI -> "वापस"; else -> "Back" }
+    val sendLabel = when (language) { AppLanguage.TELUGU -> "సందేశం పంపండి"; AppLanguage.HINDI -> "संदेश भेजें"; else -> "Send message" }
+    var sendError by remember { mutableStateOf<String?>(null) }
     val coroutineScope = rememberCoroutineScope()
     val listState = rememberLazyListState()
 
     // Sync messages every 2.5s
     LaunchedEffect(roomId) {
-        while (true) {
-            val res = PurohitApiClient.fetchChatMessages(roomId)
-            res.onSuccess { list ->
-                messages = list
-            }
-            delay(2500L)
-        }
+        if (roomId.isNotBlank()) PurohitApiClient.chatUpdates(roomId).collect { messages = it }
+
     }
 
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size - 1)
+            if (motionAllowed()) listState.animateScrollToItem(messages.size - 1) else listState.scrollToItem(messages.size - 1)
         }
     }
 
     fun sendMessage(content: String) {
         if (content.isBlank() || isSending) return
         isSending = true
+        sendError = null
         coroutineScope.launch {
             val res = PurohitApiClient.sendChatMessage(
                 roomId = roomId,
@@ -68,15 +73,16 @@ fun PriestChatScreen(
             res.onSuccess { newMsg ->
                 inputText = ""
                 messages = messages + newMsg
+            }.onFailure {
+                sendError = when (language) { AppLanguage.TELUGU -> "సందేశం పంపలేకపోయాము. మళ్లీ ప్రయత్నించండి."; AppLanguage.HINDI -> "संदेश नहीं भेजा गया। फिर से प्रयास करें।"; else -> "Message could not be sent. Please try again." }
             }
         }
     }
 
     val quickPriestChips = listOf(
-        "🙏 Subhamastu! Started on my two-wheeler.",
-        "🛵 Reaching your home in ~5 minutes.",
-        "🪔 Sacred Samagri Kit packed. Please ensure ghee & 3 plates ready.",
-        "📍 Reached your building entrance/gate."
+        "🙏 Namaste. I am on my way.",
+        "📍 Please share directions to your location.",
+        "🪔 Please confirm the pooja materials."
     )
 
     Scaffold(
@@ -91,7 +97,7 @@ fun PriestChatScreen(
                         .padding(horizontal = 8.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = onBack, modifier = Modifier.semantics { contentDescription = backLabel }) {
                         Text("←", color = Color.White, style = MaterialTheme.typography.titleLarge)
                     }
                     Spacer(modifier = Modifier.width(4.dp))
@@ -103,12 +109,7 @@ fun PriestChatScreen(
                                 fontWeight = FontWeight.Bold,
                                 style = MaterialTheme.typography.titleMedium
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Surface(
-                                shape = CircleShape,
-                                color = Color(0xFF4ADE80),
-                                modifier = Modifier.size(8.dp)
-                            ) {}
+
                         }
                         Text(
                             text = "📍 $eventAddress • 📞 $devoteePhone",
@@ -124,11 +125,11 @@ fun PriestChatScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .background(Color(0xFFFFFBEB))
+                .background(MaterialTheme.colorScheme.background)
         ) {
             // Devotee Address Guidance Strip
             Surface(
-                color = Color(0xFFFEF3C7),
+                color = MaterialTheme.colorScheme.surfaceVariant,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
@@ -140,7 +141,7 @@ fun PriestChatScreen(
                     Text(
                         text = "Destination: $eventAddress",
                         style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFF78350F),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontWeight = FontWeight.SemiBold
                     )
                 }
@@ -209,7 +210,7 @@ fun PriestChatScreen(
                                                 msg.created_at.substringAfter("T").take(5)
                                             } else "",
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = if (isFromMe) Color.White.copy(alpha = 0.7f) else Color.Gray,
+                                            color = if (isFromMe) Color.White.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onSurfaceVariant,
                                             modifier = Modifier.align(Alignment.End)
                                         )
                                     }
@@ -235,9 +236,10 @@ fun PriestChatScreen(
                 }
             }
 
+            sendError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) }
             // Text Input & Send
             Surface(
-                color = Color.White,
+                color = MaterialTheme.colorScheme.surface,
                 tonalElevation = 3.dp,
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -261,7 +263,8 @@ fun PriestChatScreen(
                         onClick = { sendMessage(inputText) },
                         enabled = inputText.isNotBlank() && !isSending,
                         modifier = Modifier
-                            .size(46.dp)
+                            .semantics { contentDescription = sendLabel }
+                            .size(48.dp)
                             .clip(CircleShape)
                             .background(if (inputText.isNotBlank()) MaterialTheme.colorScheme.primary else Color.LightGray)
                     ) {

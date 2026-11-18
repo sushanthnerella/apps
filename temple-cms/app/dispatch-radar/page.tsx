@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { apiFetch } from '../../lib/api';
 
 interface Priest {
   id: string;
@@ -54,7 +55,7 @@ export default function DispatchRadarPage() {
 
   const fetchRadar = async () => {
     try {
-      const res = await fetch('http://localhost:8085/api/v1/dispatch/radar');
+      const res = await apiFetch('/api/v1/dispatch/radar');
       if (res.ok) {
         const data = await res.json();
         setRadar(data);

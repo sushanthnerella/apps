@@ -9,10 +9,11 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/purohit-platform/backend/internal/models"
 )
+
+var mockBookingDriverSequence atomic.Uint64
 
 type mockBookingTx struct {
 	driver *mockBookingDriver
@@ -48,7 +49,7 @@ type mockBookingStmt struct {
 	query string
 }
 
-func (s *mockBookingStmt) Close() error { return nil }
+func (s *mockBookingStmt) Close() error  { return nil }
 func (s *mockBookingStmt) NumInput() int { return -1 }
 
 func (s *mockBookingStmt) Exec(args []driver.Value) (driver.Result, error) {
@@ -100,7 +101,7 @@ type mockBookingRows struct {
 }
 
 func (r *mockBookingRows) Columns() []string { return r.columns }
-func (r *mockBookingRows) Close() error       { return nil }
+func (r *mockBookingRows) Close() error      { return nil }
 func (r *mockBookingRows) Next(dest []driver.Value) error {
 	if r.idx >= len(r.values) {
 		return io.EOF
@@ -128,7 +129,7 @@ func TestCreateBookingAtomicRollbackOnMaterialError(t *testing.T) {
 	driverInstance := &mockBookingDriver{
 		failMaterials: true, // Force material insertion failure
 	}
-	driverName := fmt.Sprintf("mock_booking_driver_%d", time.Now().UnixNano())
+	driverName := fmt.Sprintf("mock_booking_driver_%d", mockBookingDriverSequence.Add(1))
 	sql.Register(driverName, driverInstance)
 
 	sqlDB, err := sql.Open(driverName, "")
@@ -174,7 +175,7 @@ func TestCreateBookingAtomicRollbackOnMaterialError(t *testing.T) {
 
 func TestCreateBookingRejectsEmptyEventAddress(t *testing.T) {
 	driverInstance := &mockBookingDriver{}
-	driverName := fmt.Sprintf("mock_booking_driver_%d", time.Now().UnixNano())
+	driverName := fmt.Sprintf("mock_booking_driver_%d", mockBookingDriverSequence.Add(1))
 	sql.Register(driverName, driverInstance)
 
 	sqlDB, err := sql.Open(driverName, "")

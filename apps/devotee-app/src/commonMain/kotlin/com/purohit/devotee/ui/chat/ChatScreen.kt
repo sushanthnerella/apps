@@ -10,8 +10,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import com.purohit.contracts.i18n.AppLanguage
+import com.purohit.devotee.LocalAppLanguage
+import com.purohit.devotee.motionAllowed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -24,14 +30,19 @@ import kotlinx.coroutines.launch
 @Composable
 fun ChatScreen(
     roomId: String,
-    priestName: String = "Brahmasri Sushanth Sastry",
-    priestPhone: String = "9876543210",
-    eventAddress: String = "Plot 42, Sri Rama Nagar, Madhav Nagar, Hyderabad",
+    priestName: String = "",
+    priestPhone: String = "",
+    eventAddress: String = "",
     onBack: () -> Unit
 ) {
     var messages by remember { mutableStateOf<List<ChatMessagePayload>>(emptyList()) }
     var inputText by remember { mutableStateOf("") }
     var isSending by remember { mutableStateOf(false) }
+    val uriHandler = LocalUriHandler.current
+    val language = LocalAppLanguage.current
+    val backLabel = when (language) { AppLanguage.TELUGU -> "వెనుకకు"; AppLanguage.HINDI -> "वापस"; else -> "Back" }
+    val sendLabel = when (language) { AppLanguage.TELUGU -> "సందేశం పంపండి"; AppLanguage.HINDI -> "संदेश भेजें"; else -> "Send message" }
+    var sendError by remember { mutableStateOf<String?>(null) }
     val coroutineScope = rememberCoroutineScope()
     val listState = rememberLazyListState()
 
@@ -39,25 +50,21 @@ fun ChatScreen(
 
     // Load and auto-refresh chat messages
     LaunchedEffect(roomId) {
-        while (true) {
-            val res = PurohitApiClient.fetchChatMessages(roomId)
-            res.onSuccess { list ->
-                messages = list
-            }
-            delay(2500L) // Refresh every 2.5s for real-time sync
-        }
+        if (roomId.isNotBlank()) PurohitApiClient.chatUpdates(roomId).collect { messages = it }
+
     }
 
     // Scroll to bottom when message arrives
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size - 1)
+            if (motionAllowed()) listState.animateScrollToItem(messages.size - 1) else listState.scrollToItem(messages.size - 1)
         }
     }
 
     fun sendMessage(content: String) {
         if (content.isBlank() || isSending) return
         isSending = true
+        sendError = null
         coroutineScope.launch {
             val res = PurohitApiClient.sendChatMessage(
                 roomId = roomId,
@@ -69,14 +76,16 @@ fun ChatScreen(
             res.onSuccess { newMsg ->
                 inputText = ""
                 messages = messages + newMsg
+            }.onFailure {
+                sendError = when (language) { AppLanguage.TELUGU -> "సందేశం పంపలేకపోయాము. మళ్లీ ప్రయత్నించండి."; AppLanguage.HINDI -> "संदेश नहीं भेजा गया। फिर से प्रयास करें।"; else -> "Message could not be sent. Please try again." }
             }
         }
     }
 
     val quickChips = listOf(
-        "📍 Flat 402, Behind Rama Temple",
+        "📍 Please share the directions.",
         "🔔 Ring calling bell upon arrival",
-        "✅ 3 Brass plates, deepam & ghee are ready",
+        "🪔 What should I prepare for the pooja?",
         "🛵 Swamiji, how many mins away are you?"
     )
 
@@ -92,7 +101,7 @@ fun ChatScreen(
                         .padding(horizontal = 8.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = onBack, modifier = Modifier.semantics { contentDescription = backLabel }) {
                         Text("←", color = Color.White, style = MaterialTheme.typography.titleLarge)
                     }
                     Spacer(modifier = Modifier.width(4.dp))
@@ -104,13 +113,7 @@ fun ChatScreen(
                                 fontWeight = FontWeight.Bold,
                                 style = MaterialTheme.typography.titleMedium
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Box(
-                                modifier = Modifier
-                                    .size(8.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(0xFF4ADE80))
-                            )
+
                         }
                         Text(
                             text = "📍 $eventAddress",
@@ -120,7 +123,8 @@ fun ChatScreen(
                         )
                     }
                     Button(
-                        onClick = { /* Call intent */ },
+                        onClick = { runCatching { uriHandler.openUri("tel:" + priestPhone.filter { it.isDigit() || it == '+' }) }.onFailure { sendError = "Could not open the phone app." } },
+                        enabled = priestPhone.any { it.isDigit() },
                         colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.2f)),
                         shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
@@ -135,7 +139,7 @@ fun ChatScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .background(Color(0xFFFFFBEB))
+                .background(MaterialTheme.colorScheme.background)
         ) {
             // Message List
             LazyColumn(
@@ -157,7 +161,7 @@ fun ChatScreen(
                         ) {
                             Surface(
                                 shape = RoundedCornerShape(12.dp),
-                                color = Color(0xFFFEF3C7),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
                                 border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFDE68A)),
                                 modifier = Modifier.fillMaxWidth(0.92f)
                             ) {
@@ -165,7 +169,7 @@ fun ChatScreen(
                                     text = msg.content,
                                     modifier = Modifier.padding(10.dp),
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = Color(0xFF78350F)
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
@@ -209,6 +213,7 @@ fun ChatScreen(
                 }
             }
 
+            sendError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) }
             // Quick Direction Chips
             LazyRow(
                 modifier = Modifier
@@ -227,7 +232,7 @@ fun ChatScreen(
             // Bottom Input Bar
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = Color.White,
+                color = MaterialTheme.colorScheme.surface,
                 tonalElevation = 6.dp
             ) {
                 Row(
@@ -247,6 +252,7 @@ fun ChatScreen(
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = { sendMessage(inputText) },
+                        modifier = Modifier.semantics { contentDescription = sendLabel },
                         shape = CircleShape,
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                         contentPadding = PaddingValues(12.dp),

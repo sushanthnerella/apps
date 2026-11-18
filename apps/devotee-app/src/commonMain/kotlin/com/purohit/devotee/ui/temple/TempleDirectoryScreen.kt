@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.purohit.contracts.idempotency.IdempotencyKeyGenerator
 import com.purohit.contracts.i18n.StringContract
 import com.purohit.contracts.temple.Temple
 import com.purohit.contracts.temple.TempleVipPuja
@@ -24,10 +25,15 @@ fun TempleDirectoryScreen(
     strings: StringContract,
     onBookVipPuja: (Temple, TempleVipPuja) -> Unit
 ) {
+    var templeLoading by remember { mutableStateOf(true) }
+    var templeError by remember { mutableStateOf<String?>(null) }
     var temples by remember { mutableStateOf<List<Temple>>(emptyList()) }
     var selectedTemple by remember { mutableStateOf<Temple?>(null) }
+    var vipLoading by remember { mutableStateOf(false) }
+    var vipError by remember { mutableStateOf<String?>(null) }
     var vipPujas by remember { mutableStateOf<List<TempleVipPuja>>(emptyList()) }
     var showBookingModal by remember { mutableStateOf(false) }
+    var ticketIntentKey by remember { mutableStateOf(IdempotencyKeyGenerator.generate()) }
     var selectedPujaForBooking by remember { mutableStateOf<TempleVipPuja?>(null) }
     var isBooking by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
@@ -37,15 +43,19 @@ fun TempleDirectoryScreen(
         res.onSuccess {
             temples = it
             if (it.isNotEmpty()) selectedTemple = it[0]
-        }
+        }.onFailure { templeError = "Could not load temples. Please reopen this screen to retry." }
+        templeLoading = false
     }
 
     LaunchedEffect(selectedTemple) {
+        vipPujas = emptyList()
+        vipError = null
         selectedTemple?.let {
+            vipLoading = true
             val res = PurohitApiClient.fetchTempleVipPujas(it.id)
-            res.onSuccess { pujas ->
-                vipPujas = pujas
-            }
+            res.onSuccess { pujas -> vipPujas = pujas }
+                .onFailure { vipError = "Could not load temple services. Please try again." }
+            vipLoading = false
         }
     }
 
@@ -57,12 +67,16 @@ fun TempleDirectoryScreen(
             color = MaterialTheme.colorScheme.primary
         )
         Text(
-            text = "Book official VIP darshan passes and live sanctum E-Poojas directly with temple boards",
+            text = "Explore temples and available services",
             style = MaterialTheme.typography.bodySmall,
-            color = Color.Gray
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
         Spacer(modifier = Modifier.height(14.dp))
+
+        if (templeLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        else if (templeError != null) Text(templeError!!, color = MaterialTheme.colorScheme.error)
+        else if (temples.isEmpty()) Text("No temples available", color = MaterialTheme.colorScheme.onSurfaceVariant)
 
         LazyColumn(
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -116,7 +130,7 @@ fun TempleDirectoryScreen(
                         Text(
                             text = "⏰ ${strings.temple.templeTimings}: ${temple.timings}",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Color.DarkGray
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
 
                         Spacer(modifier = Modifier.height(10.dp))
@@ -155,17 +169,30 @@ fun TempleDirectoryScreen(
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
                     )
+                    if (vipLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    else if (vipError != null) Text(vipError!!, color = MaterialTheme.colorScheme.error)
+                    else if (vipPujas.isEmpty()) Text("No services available", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (isBooking) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     vipPujas.forEach { vp ->
                         Card(
-                            modifier = Modifier.fillMaxWidth().clickable {
+                            modifier = Modifier.fillMaxWidth().clickable(enabled = !isBooking) {
+                                val temple = selectedTemple ?: return@clickable
+                                isBooking = true
+                                vipError = null
                                 coroutineScope.launch {
-                                    PurohitApiClient.bookTempleTicket(selectedTemple!!.id, vp.id, vp.price)
+                                    PurohitApiClient.bookTempleTicket(temple.id, vp.id, vp.price, idempotencyKey = ticketIntentKey)
+                                        .onSuccess {
+                                            ticketIntentKey = IdempotencyKeyGenerator.generate()
+                                            showBookingModal = false
+                                            onBookVipPuja(temple, vp)
+                                        }.onFailure {
+                                            vipError = "Could not book this service. Please try again."
+                                        }
+                                    isBooking = false
                                 }
-                                onBookVipPuja(selectedTemple!!, vp)
-                                showBookingModal = false
                             },
                             shape = RoundedCornerShape(10.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFFFEF3C7))
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                         ) {
                             Column(modifier = Modifier.padding(10.dp)) {
                                 Row(
@@ -173,7 +200,7 @@ fun TempleDirectoryScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     Text(vp.title, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                                    Text("₹${vp.price.toInt()}", fontWeight = FontWeight.Bold, color = Color(0xFFB45309))
+                                    Text("₹${vp.price.toInt()}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                                 }
                                 Text(vp.description, style = MaterialTheme.typography.bodySmall)
                             }

@@ -10,7 +10,7 @@ data class Vendor(
     val phone: String,
     val profilePictureUrl: String = "",
     val address: String,
-    val city: String = "Hyderabad",
+    val city: String,
     val latitude: Double = 17.3850,
     val longitude: Double = 78.4867,
     val ratingAvg: Double = 4.90,
@@ -28,7 +28,9 @@ data class VendorInventoryItem(
     val stockQuantity: Int = 100,
     val unit: String = "packet",
     val imageUrl: String = "",
-    val isAvailable: Boolean = true
+    val isAvailable: Boolean = true,
+    val priceMinor: Long = 0L,
+    val currency: String = "INR"
 )
 
 @Serializable
@@ -39,6 +41,8 @@ data class StoreOrder(
     val bookingId: String? = null,
     val status: String = "PLACED", // 'PLACED', 'PACKED', 'DISPATCHED', 'DELIVERED', 'CANCELLED'
     val totalAmount: Double,
+    val totalAmountMinor: Long = 0L,
+    val currency: String = "INR",
     val deliveryAddress: String,
     val deliverySlot: String? = null,
     val items: List<StoreOrderItem> = emptyList(),
@@ -49,18 +53,27 @@ data class StoreOrder(
 data class StoreOrderItem(
     val id: String = "",
     val inventoryItemId: String,
-    val itemName: String,
+    val itemName: String = "",
     val quantity: Int = 1,
-    val unitPrice: Double,
-    val subtotal: Double
+    val unitPrice: Double = 0.0,
+    val unitPriceMinor: Long = 0L,
+    val subtotal: Double = 0.0,
+    val subtotalMinor: Long = 0L,
+    val currency: String = "INR"
 )
 
 @Serializable
 data class CreateStoreOrderRequest(
-    val userId: String,
+    val userId: String = "",
     val vendorId: String,
     val bookingId: String? = null,
     val deliveryAddress: String,
     val deliverySlot: String? = null,
-    val items: List<StoreOrderItem>
+    val items: List<StoreOrderItemDraft> = emptyList()
+)
+
+@Serializable
+data class StoreOrderItemDraft(
+    val inventory_item_id: String,
+    val quantity: Int
 )

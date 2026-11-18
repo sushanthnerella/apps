@@ -1,16 +1,11 @@
-# Purohit Platform - iOS Application Wrapper
+# iOS hosts
 
-This folder contains the native iOS SwiftUI wrapper hosting the Compose Multiplatform UI (`DevoteeApp` and `PriestApp`).
+Step-by-step instructions for building and testing on a Mac: [MAC_SETUP.md](MAC_SETUP.md).
 
-## 🛠️ How to Run in Xcode (macOS)
-1. Ensure Xcode is installed.
-2. Build the shared Kotlin Multiplatform framework:
-   ```bash
-   ./gradlew :apps:devotee-app:embedAndSignAppleFrameworkForXcode
-   ```
-   or for Priest App:
-   ```bash
-   ./gradlew :apps:priest-app:embedAndSignAppleFrameworkForXcode
-   ```
-3. Open `iosApp.xcodeproj` or import this directory into Xcode.
-4. Select an iOS Simulator (e.g. iPhone 15 Pro) and click **Run (⌘R)**.
+On macOS with Xcode and XcodeGen installed, run `xcodegen generate` in this directory and open `PujaVaahini.xcodeproj`.
+Select DevoteeApp, PriestApp or VendorApp. Each target links its own Kotlin framework and invokes the matching Gradle build task. Set your signing team in Xcode for device builds.
+
+The legacy `iosApp/` directory is not included in the generated project. Only the three role-specific directories are compiled.
+Windows cannot compile or validate Apple frameworks. These hosts require a macOS build and device test before release.
+
+Specification reference: https://github.com/yonaskolb/XcodeGen/blob/master/Docs/ProjectSpec.md

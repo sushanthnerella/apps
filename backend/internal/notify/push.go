@@ -34,6 +34,15 @@ type NotificationMessage struct {
 type PushNotifier interface {
 	SendToToken(ctx context.Context, token string, msg NotificationMessage) error
 	SendToTokens(ctx context.Context, tokens []string, msg NotificationMessage) error
+	SendDataToTopic(ctx context.Context, topic string, data map[string]string) error
+}
+
+// EventConfigTopic is the FCM topic every app subscribes to for event config refresh signals.
+const EventConfigTopic = "event-config"
+
+func (n *LoggingNoOpNotifier) SendDataToTopic(ctx context.Context, topic string, data map[string]string) error {
+	log.Printf("[Push][NoOp] To topic %s: %v", topic, data)
+	return nil
 }
 
 // LoggingNoOpNotifier is used when FCM is not configured (e.g. development/testing).
@@ -182,6 +191,26 @@ func (f *FCMPushNotifier) getAccessToken(ctx context.Context) (string, error) {
 }
 
 func (f *FCMPushNotifier) SendToToken(ctx context.Context, token string, msg NotificationMessage) error {
+	return f.send(ctx, map[string]interface{}{
+		"token": token,
+		"notification": map[string]string{
+			"title": msg.Title,
+			"body":  msg.Body,
+		},
+		"data": msg.Data,
+	})
+}
+
+// SendDataToTopic sends a silent, data-only, high-priority message to every device subscribed to topic.
+func (f *FCMPushNotifier) SendDataToTopic(ctx context.Context, topic string, data map[string]string) error {
+	return f.send(ctx, map[string]interface{}{
+		"topic":   topic,
+		"data":    data,
+		"android": map[string]string{"priority": "high"},
+	})
+}
+
+func (f *FCMPushNotifier) send(ctx context.Context, message map[string]interface{}) error {
 	accessToken, err := f.getAccessToken(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to obtain FCM access token: %w", err)
@@ -189,18 +218,7 @@ func (f *FCMPushNotifier) SendToToken(ctx context.Context, token string, msg Not
 
 	url := fmt.Sprintf("https://fcm.googleapis.com/v1/projects/%s/messages:send", f.projectID)
 
-	payload := map[string]interface{}{
-		"message": map[string]interface{}{
-			"token": token,
-			"notification": map[string]string{
-				"title": msg.Title,
-				"body":  msg.Body,
-			},
-			"data": msg.Data,
-		},
-	}
-
-	reqBytes, _ := json.Marshal(payload)
+	reqBytes, _ := json.Marshal(map[string]interface{}{"message": message})
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBytes))
 	if err != nil {
 		return err

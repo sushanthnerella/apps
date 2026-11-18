@@ -29,6 +29,17 @@ func mapLifecycleErrorToHTTP(w http.ResponseWriter, err error) {
 	w.Header().Set("Content-Type", "application/json")
 
 	switch {
+	// Event (ghat) booking rules
+	case errors.Is(err, db.ErrRequestExpired), errors.Is(err, db.ErrPriestBusy), errors.Is(err, db.ErrBookingCodeRequired):
+		code := map[error]string{db.ErrRequestExpired: "request_expired", db.ErrPriestBusy: "priest_busy", db.ErrBookingCodeRequired: "booking_code_required"}
+		for e, c := range code {
+			if errors.Is(err, e) {
+				w.WriteHeader(http.StatusConflict)
+				json.NewEncoder(w).Encode(map[string]string{"error": c, "message": err.Error()})
+				return
+			}
+		}
+
 	// 409 Conflict: Invalid transitions, repeated transitions, terminal states, slot collision
 	case errors.Is(err, lifecycle.ErrInvalidTransition),
 		errors.Is(err, lifecycle.ErrRepeatedTransition),

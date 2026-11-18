@@ -25,6 +25,7 @@ fun PriestSamagriChecklistModal(
 ) {
     var materials by remember { mutableStateOf<List<BookingMaterialPayload>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
+    var loadError by remember { mutableStateOf<String?>(null) }
     var isSaving by remember { mutableStateOf(false) }
     var saveSuccessMessage by remember { mutableStateOf<String?>(null) }
     var selectedTab by remember { mutableStateOf(0) } // 0: Sacred Samagri (Priest), 1: Devotee Household Items
@@ -41,20 +42,8 @@ fun PriestSamagriChecklistModal(
         res.onSuccess { list ->
             materials = list
         }.onFailure {
-            // Default ritual samagri if offline
-            materials = listOf(
-                BookingMaterialPayload(item_name = "Haldi (Pasupu) & Kumkuma", category = "Sacred Ritual Samagri", quantity = "100g each", is_included_by_priest = true),
-                BookingMaterialPayload(item_name = "Akshatulu & Gandham Paste", category = "Sacred Ritual Samagri", quantity = "1 box", is_included_by_priest = true),
-                BookingMaterialPayload(item_name = "Dhoop Sticks & Camphor (Karpooram)", category = "Sacred Ritual Samagri", quantity = "1 pack", is_included_by_priest = true),
-                BookingMaterialPayload(item_name = "Navadhanya Pack (9 Grains)", category = "Sacred Ritual Samagri", quantity = "1 pack", is_included_by_priest = true),
-                BookingMaterialPayload(item_name = "Sacred Yagnopaveetam & Raksha Kankanam", category = "Sacred Ritual Samagri", quantity = "2 sets", is_included_by_priest = true),
-                BookingMaterialPayload(item_name = "Satyanarayana Vrata Katha Book & Navagraha Chart", category = "Sacred Ritual Samagri", quantity = "1 set", is_included_by_priest = true),
-                BookingMaterialPayload(item_name = "Brass / Copper Puja Plates (Thalis)", category = "Devotee Household Items", quantity = "3 nos", is_included_by_priest = false),
-                BookingMaterialPayload(item_name = "Brass Deepam / Diyas & Pure Cow Ghee", category = "Devotee Household Items", quantity = "2 nos, 500g", is_included_by_priest = false),
-                BookingMaterialPayload(item_name = "Sitting Mats (Asanam)", category = "Devotee Household Items", quantity = "2 nos", is_included_by_priest = false),
-                BookingMaterialPayload(item_name = "Raw Rice (Biyyam) for Mandapam", category = "Devotee Household Items", quantity = "2 kg", is_included_by_priest = false),
-                BookingMaterialPayload(item_name = "Fresh Bananas, Variety Fruits & Flowers", category = "Devotee Household Items", quantity = "2 dozens", is_included_by_priest = false)
-            )
+            materials = emptyList()
+            loadError = "Could not load this checklist. Please reopen it to retry."
         }
     }
 
@@ -72,6 +61,7 @@ fun PriestSamagriChecklistModal(
     }
 
     fun saveChecklist() {
+        if (loadError != null) return
         isSaving = true
         coroutineScope.launch {
             val res = PurohitApiClient.updateBookingMaterials(bookingId, materials)
@@ -79,7 +69,7 @@ fun PriestSamagriChecklistModal(
             res.onSuccess {
                 saveSuccessMessage = "✓ Samagri checklist updated & synced with Cloud DB!"
             }.onFailure { err ->
-                saveSuccessMessage = "Updated locally (Sync error: ${err.message})"
+                saveSuccessMessage = "Could not save checklist: ${err.message ?: "Please try again."}"
             }
         }
     }
@@ -88,6 +78,7 @@ fun PriestSamagriChecklistModal(
         onDismissRequest = onDismiss,
         title = {
             Column {
+                loadError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -106,7 +97,7 @@ fun PriestSamagriChecklistModal(
                 Text(
                     text = poojaTitle,
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         },
@@ -154,7 +145,7 @@ fun PriestSamagriChecklistModal(
                     Text(
                         text = "Check items as you pack them into your ritual travel bag before departure:",
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color.DarkGray
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(modifier = Modifier.height(8.dp))
 
@@ -165,7 +156,7 @@ fun PriestSamagriChecklistModal(
                         itemsIndexed(sacredItems) { _, item ->
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
-                                color = if (item.is_included_by_priest) Color(0xFFFEF3C7) else Color(0xFFF1F5F9),
+                                color = if (item.is_included_by_priest) MaterialTheme.colorScheme.surfaceVariant else Color(0xFFF1F5F9),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Row(
@@ -186,11 +177,11 @@ fun PriestSamagriChecklistModal(
                                         Text(
                                             text = "Qty: ${item.quantity}",
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = Color.Gray
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
                                     if (item.is_included_by_priest) {
-                                        Text("✓ Packed", color = Color(0xFFB45309), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                                        Text("✓ Packed", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
@@ -225,7 +216,7 @@ fun PriestSamagriChecklistModal(
                     Text(
                         text = "Standard essentials devotee must arrange at home before your arrival:",
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color.DarkGray
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(modifier = Modifier.height(8.dp))
 
@@ -254,7 +245,7 @@ fun PriestSamagriChecklistModal(
                                         Text(
                                             text = "Required: ${item.quantity} (Devotee's responsibility)",
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = Color.Gray
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
                                 }

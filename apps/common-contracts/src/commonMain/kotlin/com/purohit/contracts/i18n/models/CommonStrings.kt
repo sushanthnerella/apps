@@ -1,6 +1,22 @@
 package com.purohit.contracts.i18n.models
 
 interface CommonStrings {
+    val bookingStatusTitle: String
+    val bookingRequested: String
+    val bookingAccepted: String
+    val bookingInTransit: String
+    val bookingArrived: String
+    val bookingInProgress: String
+    val bookingCompleted: String
+    val bookingCancelled: String
+    val bookingRejected: String
+    val bookingLoading: String
+    val bookingRefreshError: String
+    val bookingMissing: String
+    val trackingUnavailable: String
+    val featureUnavailable: String
+    val videoUnavailable: String
+    val muhurthamUnavailable: String
     val tabServices: String
     val tabTemples: String
     val tabPujaStore: String

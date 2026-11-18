@@ -44,6 +44,9 @@ data class PoojaPackage(
     val category: String, // Gruhapravesam, Satyanarayana Vratam, Ganapathi Homa, etc.
     val basePrice: Double,
     val samagriKitPrice: Double,
+    val basePriceMinor: Long = 0L,
+    val samagriKitPriceMinor: Long = 0L,
+    val currency: String = "INR",
     val durationMinutes: Int,
     val isOnlineEligible: Boolean,
     val samagriChecklist: List<SamagriItem> = emptyList()
@@ -64,10 +67,20 @@ data class Booking(
     val includeSamagriKit: Boolean,
     val totalAmount: Double,
     val dakshinaAmount: Double = 0.0,
+    val totalAmountMinor: Long = 0L,
+    val dakshinaAmountMinor: Long = 0L,
+    val currency: String = "INR",
     val escrowStatus: PaymentEscrowStatus,
     val scheduledEpochMillis: Long? = null,
     val completionOtp: String? = null,
     val address: String,
     val latitude: Double,
     val longitude: Double
+)
+
+@Serializable
+data class BookingOtpResponse(
+    val booking_id: String,
+    val completion_otp: String,
+    val status: String = ""
 )

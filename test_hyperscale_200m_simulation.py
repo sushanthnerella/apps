@@ -170,11 +170,14 @@ def benchmark_gate_scanner_latency(base_url):
         start_t = time.perf_counter()
         try:
             with urllib.request.urlopen(req, timeout=5) as res:
+                assert res.status == 200, f"Expected 200, got {res.status}"
                 _ = res.read()
         except urllib.error.HTTPError as e:
-            _ = e.read() # Accept 400 for synthetic token
-        except Exception:
-            pass
+            # Synthetic unbooked token returns 400 Bad Request ("ticket not found or already used")
+            assert e.code == 400, f"Expected HTTP 400 for synthetic token, got {e.code}"
+            _ = e.read()
+        except urllib.error.URLError as e:
+            raise ConnectionError(f"Failed to connect to gateway at {base_url}: {e}") from e
         elapsed_ms = (time.perf_counter() - start_t) * 1000
         latencies.append(elapsed_ms)
 
