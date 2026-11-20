@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -101,6 +102,29 @@ func mapLifecycleErrorToHTTP(w http.ResponseWriter, err error) {
 	}
 }
 
+// errSessionStoreUnavailable marks a session check that failed because the database
+// could not be read, not because the session is invalid. Callers answer 503 so clients
+// keep their login and retry instead of treating it as a revoked session.
+var errSessionStoreUnavailable = errors.New("session store unavailable")
+
+func sessionLookupError(err error) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("session expired or revoked: account not found")
+	}
+	return fmt.Errorf("%w: %v", errSessionStoreUnavailable, err)
+}
+
+// writeSessionError answers a failed session check: 503 when the database was unreachable, else 401.
+func writeSessionError(w http.ResponseWriter, err error, unauthorizedBody string) {
+	w.Header().Set("Content-Type", "application/json")
+	if errors.Is(err, errSessionStoreUnavailable) {
+		w.Header().Set("Retry-After", "2")
+		http.Error(w, `{"error":"service_unavailable","message":"Please try again in a moment."}`, http.StatusServiceUnavailable)
+		return
+	}
+	http.Error(w, unauthorizedBody, http.StatusUnauthorized)
+}
+
 // requireCallerSession extracts and validates the Bearer token and verifies
 // that the session has not been revoked or expired against the database.
 // Rejects unauthenticated, malformed, expired, or revoked tokens with an error.
@@ -120,7 +144,7 @@ func requireCallerSession(r *http.Request, storage *db.Storage) (*auth.CustomCla
 	if storage != nil && storage.DB != nil {
 		dbVersion, err := storage.GetUserSessionVersion(claims.UserID, claims.Role)
 		if err != nil {
-			return nil, fmt.Errorf("session lookup failed: %w", err)
+			return nil, sessionLookupError(err)
 		}
 		if err := auth.ValidateSessionVersion(claims.SessionVersion, dbVersion); err != nil {
 			return nil, fmt.Errorf("session expired or revoked: %w", err)

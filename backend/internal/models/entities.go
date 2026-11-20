@@ -160,11 +160,11 @@ type BookingCreateRequest struct {
 	SlotID            string  `json:"slot_id,omitempty"`
 	HoldToken         string  `json:"hold_token,omitempty"`
 	BookingType       string  `json:"booking_type"`
-	IncludeSamagriKit    bool    `json:"include_samagri_kit"`
-	TotalAmountMinor     int64   `json:"total_amount_minor"`
-	Currency             string  `json:"currency,omitempty"`
-	TotalAmount          float64 `json:"total_amount,omitempty"` // Deprecated: use total_amount_minor
-	EventAddress         string  `json:"event_address"`
+	IncludeSamagriKit bool    `json:"include_samagri_kit"`
+	TotalAmountMinor  int64   `json:"total_amount_minor"`
+	Currency          string  `json:"currency,omitempty"`
+	TotalAmount       float64 `json:"total_amount,omitempty"` // Deprecated: use total_amount_minor
+	EventAddress      string  `json:"event_address"`
 	Latitude          float64 `json:"latitude"`
 	Longitude         float64 `json:"longitude"`
 	ScheduledDate     string  `json:"scheduled_date"`
@@ -186,25 +186,26 @@ type BookingDetailResponse struct {
 	PoojaTitle        string  `json:"pooja_title"`
 	BookingType       string  `json:"booking_type"`
 	Status            string  `json:"status"`
-	EscrowStatus         string    `json:"escrow_status"`
-	TotalAmountMinor     int64     `json:"total_amount_minor"`
-	Currency             string    `json:"currency,omitempty"`
-	TotalAmount          float64   `json:"total_amount,omitempty"` // Deprecated: use total_amount_minor
-	IncludeSamagriKit    bool      `json:"include_samagri_kit"`
+	EscrowStatus      string  `json:"escrow_status"`
+	TotalAmountMinor  int64   `json:"total_amount_minor"`
+	Currency          string  `json:"currency,omitempty"`
+	TotalAmount       float64 `json:"total_amount,omitempty"` // Deprecated: use total_amount_minor
+	IncludeSamagriKit bool    `json:"include_samagri_kit"`
 	// CompletionOTP is intentionally excluded from shared booking list and detail responses (Task 05).
 	// It is provided exclusively to the authenticated devotee booking owner via GET /api/v1/bookings/{id}/otp.
-	CompletionOTP     string    `json:"-"`
-	EventAddress      string    `json:"event_address"`
-	Latitude          float64   `json:"latitude"`
-	Longitude         float64   `json:"longitude"`
-	ScheduledDate     string    `json:"scheduled_date"`
-	SlotTime          string    `json:"slot_time"`
-	DevoteeGotram     string    `json:"devotee_gotram"`
-	DevoteeNakshatram string    `json:"devotee_nakshatram"`
-	DevoteeRashi      string    `json:"devotee_rashi"`
-	SankalpamPurpose  string    `json:"sankalpam_purpose"`
-	ChatRoomID        string    `json:"chat_room_id"`
-	CreatedAt         time.Time `json:"created_at"`
+	CompletionOTP     string     `json:"-"`
+	EventAddress      string     `json:"event_address"`
+	Latitude          float64    `json:"latitude"`
+	Longitude         float64    `json:"longitude"`
+	ScheduledDate     string     `json:"scheduled_date"`
+	SlotTime          string     `json:"slot_time"`
+	DevoteeGotram     string     `json:"devotee_gotram"`
+	DevoteeNakshatram string     `json:"devotee_nakshatram"`
+	DevoteeRashi      string     `json:"devotee_rashi"`
+	SankalpamPurpose  string     `json:"sankalpam_purpose"`
+	ChatRoomID        string     `json:"chat_room_id"`
+	CreatedAt         time.Time  `json:"created_at"`
+	RequestExpiresAt  *time.Time `json:"request_expires_at,omitempty"`
 }
 
 type BookingOTPResponse struct {
@@ -214,15 +215,15 @@ type BookingOTPResponse struct {
 }
 
 type BookingStatusUpdateRequest struct {
-	BookingID      string  `json:"booking_id"`
-	Status         string  `json:"status"`
-	PriestID       string  `json:"priest_id,omitempty"`
+	BookingID           string  `json:"booking_id"`
+	Status              string  `json:"status"`
+	PriestID            string  `json:"priest_id,omitempty"`
 	CompletionOTP       string  `json:"completion_otp,omitempty"`
 	DakshinaAmountMinor int64   `json:"dakshina_amount_minor,omitempty"`
 	Currency            string  `json:"currency,omitempty"`
 	DakshinaAmount      float64 `json:"dakshina_amount,omitempty"` // Deprecated: use dakshina_amount_minor
 	CallerID            string  `json:"-"`
-	CallerRole     string  `json:"-"`
+	CallerRole          string  `json:"-"`
 }
 
 type WebRTCMessage struct {
@@ -276,62 +277,62 @@ type HoldSlotRequest struct {
 }
 
 type PriestCustomService struct {
-	ID               string    `json:"id"`
-	PriestID         string    `json:"priest_id"`
-	Title            string    `json:"title"`
-	TitleEn          string    `json:"title_en"`
-	TitleTe          string    `json:"title_te"`
-	TitleHi          string    `json:"title_hi"`
-	Category              string    `json:"category"`
-	DakshinaFeeMinor      int64     `json:"dakshina_fee_minor"`
-	SamagriKitPriceMinor  int64     `json:"samagri_kit_price_minor"`
-	Currency              string    `json:"currency,omitempty"`
-	DakshinaFee           float64   `json:"dakshina_fee,omitempty"` // Deprecated
-	SamagriKitPrice       float64   `json:"samagri_kit_price,omitempty"` // Deprecated
-	DurationMinutes       int       `json:"duration_minutes"`
-	IsOnlineEligible bool      `json:"is_online_eligible"`
-	SamagriChecklist []string  `json:"samagri_checklist"`
-	Description      string    `json:"description"`
-	DescriptionEn    string    `json:"description_en"`
-	DescriptionTe    string    `json:"description_te"`
-	DescriptionHi    string    `json:"description_hi"`
-	IsActive         bool      `json:"is_active"`
-	CreatedAt        time.Time `json:"created_at"`
+	ID                   string    `json:"id"`
+	PriestID             string    `json:"priest_id"`
+	Title                string    `json:"title"`
+	TitleEn              string    `json:"title_en"`
+	TitleTe              string    `json:"title_te"`
+	TitleHi              string    `json:"title_hi"`
+	Category             string    `json:"category"`
+	DakshinaFeeMinor     int64     `json:"dakshina_fee_minor"`
+	SamagriKitPriceMinor int64     `json:"samagri_kit_price_minor"`
+	Currency             string    `json:"currency,omitempty"`
+	DakshinaFee          float64   `json:"dakshina_fee,omitempty"`      // Deprecated
+	SamagriKitPrice      float64   `json:"samagri_kit_price,omitempty"` // Deprecated
+	DurationMinutes      int       `json:"duration_minutes"`
+	IsOnlineEligible     bool      `json:"is_online_eligible"`
+	SamagriChecklist     []string  `json:"samagri_checklist"`
+	Description          string    `json:"description"`
+	DescriptionEn        string    `json:"description_en"`
+	DescriptionTe        string    `json:"description_te"`
+	DescriptionHi        string    `json:"description_hi"`
+	IsActive             bool      `json:"is_active"`
+	CreatedAt            time.Time `json:"created_at"`
 }
 
 type CreateCustomServiceRequest struct {
-	PriestID         string   `json:"priest_id"`
-	Title            string   `json:"title"`
-	TitleEn          string   `json:"title_en,omitempty"`
-	TitleTe          string   `json:"title_te,omitempty"`
-	TitleHi          string   `json:"title_hi,omitempty"`
-	Category              string   `json:"category"`
-	DakshinaFeeMinor      int64    `json:"dakshina_fee_minor"`
-	SamagriKitPriceMinor  int64    `json:"samagri_kit_price_minor"`
-	Currency              string   `json:"currency,omitempty"`
-	DakshinaFee           float64  `json:"dakshina_fee,omitempty"` // Deprecated
-	SamagriKitPrice       float64  `json:"samagri_kit_price,omitempty"` // Deprecated
-	DurationMinutes       int      `json:"duration_minutes"`
-	IsOnlineEligible bool     `json:"is_online_eligible"`
-	SamagriChecklist []string `json:"samagri_checklist"`
-	Description      string   `json:"description"`
-	DescriptionEn    string   `json:"description_en,omitempty"`
-	DescriptionTe    string   `json:"description_te,omitempty"`
-	DescriptionHi    string   `json:"description_hi,omitempty"`
+	PriestID             string   `json:"priest_id"`
+	Title                string   `json:"title"`
+	TitleEn              string   `json:"title_en,omitempty"`
+	TitleTe              string   `json:"title_te,omitempty"`
+	TitleHi              string   `json:"title_hi,omitempty"`
+	Category             string   `json:"category"`
+	DakshinaFeeMinor     int64    `json:"dakshina_fee_minor"`
+	SamagriKitPriceMinor int64    `json:"samagri_kit_price_minor"`
+	Currency             string   `json:"currency,omitempty"`
+	DakshinaFee          float64  `json:"dakshina_fee,omitempty"`      // Deprecated
+	SamagriKitPrice      float64  `json:"samagri_kit_price,omitempty"` // Deprecated
+	DurationMinutes      int      `json:"duration_minutes"`
+	IsOnlineEligible     bool     `json:"is_online_eligible"`
+	SamagriChecklist     []string `json:"samagri_checklist"`
+	Description          string   `json:"description"`
+	DescriptionEn        string   `json:"description_en,omitempty"`
+	DescriptionTe        string   `json:"description_te,omitempty"`
+	DescriptionHi        string   `json:"description_hi,omitempty"`
 }
 
 type ServiceTranslationItem struct {
-	ID            string  `json:"id"`
-	Type          string  `json:"type"` // "CATALOG" or "PRIEST_CUSTOM"
-	PriestID      string  `json:"priest_id,omitempty"`
-	PriestName    string  `json:"priest_name,omitempty"`
-	OriginalTitle string  `json:"original_title"`
-	TitleEn       string  `json:"title_en"`
-	TitleTe       string  `json:"title_te"`
-	TitleHi       string  `json:"title_hi"`
-	DescriptionEn string  `json:"description_en"`
-	DescriptionTe string  `json:"description_te"`
-	DescriptionHi string  `json:"description_hi"`
+	ID             string  `json:"id"`
+	Type           string  `json:"type"` // "CATALOG" or "PRIEST_CUSTOM"
+	PriestID       string  `json:"priest_id,omitempty"`
+	PriestName     string  `json:"priest_name,omitempty"`
+	OriginalTitle  string  `json:"original_title"`
+	TitleEn        string  `json:"title_en"`
+	TitleTe        string  `json:"title_te"`
+	TitleHi        string  `json:"title_hi"`
+	DescriptionEn  string  `json:"description_en"`
+	DescriptionTe  string  `json:"description_te"`
+	DescriptionHi  string  `json:"description_hi"`
 	Category       string  `json:"category"`
 	BasePriceMinor int64   `json:"base_price_minor"`
 	Currency       string  `json:"currency,omitempty"`
@@ -353,11 +354,11 @@ type UpdateServiceTranslationRequest struct {
 // Module B: Samagri & Puja Store
 // -------------------------------------------------------------
 type PoojaSamagriItem struct {
-	ID             string  `json:"id"`
-	PoojaID        string  `json:"pooja_id"`
-	ItemName       string  `json:"item_name"`
-	Category       string  `json:"category"`
-	Quantity       string  `json:"quantity"`
+	ID                  string  `json:"id"`
+	PoojaID             string  `json:"pooja_id"`
+	ItemName            string  `json:"item_name"`
+	Category            string  `json:"category"`
+	Quantity            string  `json:"quantity"`
 	IsMandatory         bool    `json:"is_mandatory"`
 	EstimatedPriceMinor int64   `json:"estimated_price_minor"`
 	Currency            string  `json:"currency,omitempty"`
@@ -419,18 +420,18 @@ type StoreOrderItem struct {
 }
 
 type StoreOrder struct {
-	ID              string           `json:"id"`
-	UserID          string           `json:"user_id"`
-	VendorID        string           `json:"vendor_id"`
-	BookingID       string           `json:"booking_id,omitempty"`
+	ID               string           `json:"id"`
+	UserID           string           `json:"user_id"`
+	VendorID         string           `json:"vendor_id"`
+	BookingID        string           `json:"booking_id,omitempty"`
 	Status           string           `json:"status"`
 	TotalAmountMinor int64            `json:"total_amount_minor"`
 	Currency         string           `json:"currency,omitempty"`
 	TotalAmount      float64          `json:"total_amount,omitempty"` // Deprecated
 	DeliveryAddress  string           `json:"delivery_address"`
-	DeliverySlot    string           `json:"delivery_slot,omitempty"`
-	Items           []StoreOrderItem `json:"items,omitempty"`
-	CreatedAt       time.Time        `json:"created_at"`
+	DeliverySlot     string           `json:"delivery_slot,omitempty"`
+	Items            []StoreOrderItem `json:"items,omitempty"`
+	CreatedAt        time.Time        `json:"created_at"`
 }
 
 type CreateStoreOrderRequest struct {
@@ -554,11 +555,11 @@ type CancellationQuote struct {
 	PriestCompensationMinor int64   `json:"priest_compensation_minor"`
 	RefundAmountMinor       int64   `json:"refund_amount_minor"`
 	Currency                string  `json:"currency,omitempty"`
-	AdvancePaid             float64 `json:"advance_paid,omitempty"` // Deprecated
-	CancellationFee         float64 `json:"cancellation_fee,omitempty"` // Deprecated
-	TravelFee               float64 `json:"travel_fee,omitempty"` // Deprecated
+	AdvancePaid             float64 `json:"advance_paid,omitempty"`        // Deprecated
+	CancellationFee         float64 `json:"cancellation_fee,omitempty"`    // Deprecated
+	TravelFee               float64 `json:"travel_fee,omitempty"`          // Deprecated
 	PriestCompensation      float64 `json:"priest_compensation,omitempty"` // Deprecated
-	RefundAmount            float64 `json:"refund_amount,omitempty"` // Deprecated
+	RefundAmount            float64 `json:"refund_amount,omitempty"`       // Deprecated
 	IsFreeCancellation      bool    `json:"is_free_cancellation"`
 	PolicyNotice            string  `json:"policy_notice"`
 }
@@ -647,4 +648,3 @@ type RegisterDeviceRequest struct {
 	DeviceToken string `json:"device_token"`
 	Platform    string `json:"platform"`
 }
-

@@ -188,9 +188,14 @@ func registerChatRoutes(router *mux.Router, storage *db.Storage) {
 			http.Error(w, fmt.Sprintf(`{"error":"unauthorized","message":"%v"}`, err), http.StatusUnauthorized)
 			return
 		}
+		const revokedBody = `{"error":"unauthorized","message":"session expired or revoked"}`
 		dbVersion, err := storage.GetUserSessionVersion(claims.UserID, claims.Role)
-		if err != nil || auth.ValidateSessionVersion(claims.SessionVersion, dbVersion) != nil {
-			http.Error(w, `{"error":"unauthorized","message":"session expired or revoked"}`, http.StatusUnauthorized)
+		if err != nil {
+			writeSessionError(w, sessionLookupError(err), revokedBody)
+			return
+		}
+		if auth.ValidateSessionVersion(claims.SessionVersion, dbVersion) != nil {
+			http.Error(w, revokedBody, http.StatusUnauthorized)
 			return
 		}
 
