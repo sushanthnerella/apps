@@ -22,7 +22,6 @@ class MainActivity : ComponentActivity() {
         AppearanceStorage.context = applicationContext
         com.purohit.devotee.network.PurohitApiClient.initializeSession(com.purohit.contracts.session.AndroidSessionVault(applicationContext))
 
-        requestAppPermissions()
         subscribeToEventConfigTopic()
 
         setContent {
@@ -33,6 +32,8 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         com.purohit.devotee.event.EventConfigStore.refreshIfStale()
+        // Ask for notifications only once the devotee is signed in, not on first launch.
+        if (com.purohit.devotee.network.PurohitApiClient.authToken.isNotBlank()) requestNotificationPermission()
     }
 
     private fun subscribeToEventConfigTopic() {
@@ -44,21 +45,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun requestAppPermissions() {
-        val permissions = mutableListOf(
-            Manifest.permission.CAMERA,
-            Manifest.permission.RECORD_AUDIO
-        )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
-        }
+    private var askedForNotifications = false
 
-        val missing = permissions.filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }
-
-        if (missing.isNotEmpty()) {
-            permissionLauncher.launch(missing.toTypedArray())
-        }
+    private fun requestNotificationPermission() {
+        if (askedForNotifications || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
+        askedForNotifications = true
+        permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
     }
 }

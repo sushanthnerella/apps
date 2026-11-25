@@ -562,6 +562,19 @@ func (s *Storage) CreateEventBooking(ctx context.Context, userID, eventID string
 		if cutoff := scheduled.Add(-minScheduleLead); cutoff.Before(expires) {
 			expires = cutoff
 		}
+		// Refuse up front when the priest already has an accepted ritual at that time,
+		// instead of letting the request wait until it expires.
+		var clash bool
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM bookings WHERE priest_id::text = $1
+			AND event_id IS NOT NULL AND status IN ('ACCEPTED','IN_TRANSIT','ARRIVED','POOJA_STARTED')
+			AND scheduled_at < $2::timestamptz + make_interval(mins => $3)
+			AND $2::timestamptz < scheduled_at + make_interval(mins => (agreement_snapshot->>'duration_minutes')::int))`,
+			req.PriestID, scheduled, duration).Scan(&clash); err != nil {
+			return nil, err
+		}
+		if clash {
+			return nil, ErrPriestBusy
+		}
 	}
 
 	codeN, err := rand.Int(rand.Reader, big.NewInt(10000))
@@ -601,14 +614,35 @@ func (s *Storage) CreateEventBooking(ctx context.Context, userID, eventID string
 	}, nil
 }
 
-// ExpireEventRequests cancels event requests nobody accepted in time. Returns rows changed.
+// NormalRequestTTL is how long a home-visit request waits for the priest before it expires.
+const NormalRequestTTL = 3 * time.Minute
+
+// ExpireEventRequests cancels requests nobody accepted in time: event requests by
+// request_expires_at, home-visit requests after NormalRequestTTL. Slots held by
+// expired home-visit requests are released. Returns rows changed.
 func (s *Storage) ExpireEventRequests(ctx context.Context) (int64, error) {
-	res, err := s.DB.ExecContext(ctx, `UPDATE bookings SET status='CANCELLED', cancellation_reason='request_expired', cancelled_by='system'
-		WHERE status='REQUESTED' AND event_id IS NOT NULL AND request_expires_at < NOW()`)
+	res, err := s.DB.QueryContext(ctx, `WITH expired AS (
+			UPDATE bookings SET status='CANCELLED', cancellation_reason='request_expired', cancelled_by='system'
+			WHERE status='REQUESTED' AND (
+				(event_id IS NOT NULL AND request_expires_at < NOW())
+				OR (event_id IS NULL AND COALESCE(request_expires_at, created_at + make_interval(secs => $1)) < NOW()))
+			RETURNING id
+		), released AS (
+			UPDATE priest_availability_slots SET is_booked = false, booked_booking_id = NULL
+			WHERE booked_booking_id IN (SELECT id FROM expired)
+		)
+		SELECT COUNT(*) FROM expired`, NormalRequestTTL.Seconds())
 	if err != nil {
 		return 0, err
 	}
-	return res.RowsAffected()
+	defer res.Close()
+	var n int64
+	if res.Next() {
+		if err := res.Scan(&n); err != nil {
+			return 0, err
+		}
+	}
+	return n, res.Err()
 }
 
 // checkEventTransition adds event rules on top of the shared booking state machine.

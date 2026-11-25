@@ -57,6 +57,7 @@ func mapLifecycleErrorToHTTP(w http.ResponseWriter, err error) {
 		w.WriteHeader(http.StatusConflict)
 		json.NewEncoder(w).Encode(map[string]string{
 			"error":   "conflict",
+			"code":    "INVALID_OTP",
 			"message": "invalid completion OTP",
 		})
 

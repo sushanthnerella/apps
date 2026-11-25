@@ -534,7 +534,7 @@ object PurohitApiClient {
                 if (response.status.value in 200..299) {
                     return Result.success(parseResponse(response))
                 }
-                if (response.status.value == 409 && attempts < 3) {
+                if (response.status.value == 409 && response.headers["Retry-After"] != null && attempts < 3) {
                     val retryAfter = response.headers["Retry-After"]?.toLongOrNull() ?: 1L
                     delay(retryAfter.coerceAtLeast(1L) * 1000L)
                     continue
@@ -819,9 +819,28 @@ object PurohitApiClient {
                 setBody(CreatePriestSlotPayload(priestId, slotDate, startTime, endTime))
             }
             if (response.status.value in 200..299) Result.success(response.bodyAsText())
-            else Result.failure(Exception("Failed to create slot (HTTP ${response.status.value})"))
+            else Result.failure(SlotApiException(slotErrorCode(response), response.status.value))
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
+
+    suspend fun deletePriestSlot(slotId: String): Result<Unit> {
+        val client = httpClient ?: return Result.failure(Exception("HTTP client engine unavailable"))
+        return try {
+            val response = client.delete("$baseUrl/api/v1/priests/slots/$slotId") {
+                header("Authorization", "Bearer $authToken")
+            }
+            if (response.status.value in 200..299) Result.success(Unit)
+            else Result.failure(SlotApiException(slotErrorCode(response), response.status.value))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private suspend fun slotErrorCode(response: HttpResponse): String =
+        runCatching { Regex("\"code\"\\s*:\\s*\"([A-Z_]+)\"").find(response.bodyAsText())?.groupValues?.get(1) }.getOrNull() ?: ""
 }
+
+/** Server rejected a slot operation; [code] is e.g. SLOT_OVERLAP, SLOT_IN_PAST, SLOT_NOT_REMOVABLE. */
+class SlotApiException(val code: String, val httpStatus: Int) : Exception("Slot request failed ($code, HTTP $httpStatus)")

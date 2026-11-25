@@ -46,6 +46,8 @@ class EventBookingLogicTest {
         assertEquals(EventBookingPhase.STARTED, eventBookingPhase("POOJA_STARTED", exp, exp))
         assertEquals(EventBookingPhase.COMPLETED, eventBookingPhase("COMPLETED", exp, exp))
         assertEquals(EventBookingPhase.CANCELLED, eventBookingPhase("CANCELLED", exp, exp))
+        // The server's expiry sweep marks unanswered requests CANCELLED after the deadline.
+        assertEquals(EventBookingPhase.EXPIRED, eventBookingPhase("CANCELLED", exp, Instant.parse("2027-07-01T05:01:00Z")))
     }
 
     @Test

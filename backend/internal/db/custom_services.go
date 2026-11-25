@@ -171,18 +171,6 @@ func (s *Storage) CreatePriestCustomService(req models.CreateCustomServiceReques
 		descHi = fmt.Sprintf("पुरोहित जी द्वारा संपन्न की जाने वाली पावन वैदिक पूजा: %s", req.Description)
 	}
 
-	var validPriest bool
-	if req.PriestID != "" {
-		var pid string
-		if err := s.DB.QueryRow(`SELECT id::text FROM priests WHERE id::text = $1`, req.PriestID).Scan(&pid); err == nil && pid != "" {
-			validPriest = true
-			req.PriestID = pid
-		}
-	}
-	if !validPriest {
-		s.DB.QueryRow(`SELECT id::text FROM priests LIMIT 1`).Scan(&req.PriestID)
-	}
-
 	if req.DakshinaFeeMinor == 0 && req.DakshinaFee > 0 {
 		req.DakshinaFeeMinor = int64(math.Round(req.DakshinaFee * 100))
 	}
@@ -205,16 +193,35 @@ func (s *Storage) CreatePriestCustomService(req models.CreateCustomServiceReques
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) 
 		RETURNING id
 	`
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return "", fmt.Errorf("failed to begin offering save: %w", err)
+	}
+	defer tx.Rollback()
+
 	var id string
-	err = s.DB.QueryRow(
-		query, req.PriestID, req.Title, titleEn, titleTe, titleHi, req.Category, 
-		req.DakshinaFee, req.DakshinaFeeMinor, req.SamagriKitPrice, req.SamagriKitPriceMinor, 
+	err = tx.QueryRow(
+		query, req.PriestID, req.Title, titleEn, titleTe, titleHi, req.Category,
+		req.DakshinaFee, req.DakshinaFeeMinor, req.SamagriKitPrice, req.SamagriKitPriceMinor,
 		req.DurationMinutes, req.IsOnlineEligible,
 		checklistJSON, req.Description, descEn, descTe, descHi,
 	).Scan(&id)
 
 	if err != nil {
 		return "", fmt.Errorf("failed to insert custom service: %w", err)
+	}
+	// Preserve existing offerings and avoid duplicate entries on repeated saves.
+	_, err = tx.Exec(`UPDATE priests SET services_offered = CASE
+		WHEN EXISTS (SELECT 1 FROM unnest(COALESCE(services_offered, ARRAY[]::text[])) AS offered(name)
+		             WHERE lower(trim(offered.name)) = lower(trim($2)))
+		THEN COALESCE(services_offered, ARRAY[]::text[])
+		ELSE array_append(COALESCE(services_offered, ARRAY[]::text[]), trim($2)) END
+		WHERE id = $1::uuid`, req.PriestID, req.Title)
+	if err != nil {
+		return "", fmt.Errorf("failed to update priest offerings: %w", err)
+	}
+	if err = tx.Commit(); err != nil {
+		return "", fmt.Errorf("failed to commit offering: %w", err)
 	}
 	return id, nil
 }

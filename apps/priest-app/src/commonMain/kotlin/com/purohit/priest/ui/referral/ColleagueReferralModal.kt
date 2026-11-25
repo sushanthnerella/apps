@@ -28,10 +28,10 @@ data class TrustedColleague(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ColleagueReferralModal(
-    bookingId: String = "f312db8f-1d71-4cab-b5ba-77fbead70c71",
-    referringPriestId: String = "6e7d277c-4ee2-469f-96ac-331517389762",
+    bookingId: String,
+    referringPriestId: String,
     bookingTitle: String,
-    scheduledSlot: String = "Tomorrow (Nov 4) • Abhijit Muhurtham (11:45 AM)",
+    scheduledSlot: String,
     strings: StringContract,
     onReferralConfirmed: (colleagueId: String, colleagueName: String, reason: String) -> Unit,
     onDismiss: () -> Unit
@@ -40,8 +40,13 @@ fun ColleagueReferralModal(
     var colleagues by remember { mutableStateOf<List<TrustedColleague>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var directoryError by remember { mutableStateOf<String?>(null) }
+    var reloadKey by remember { mutableStateOf(0) }
+    val language = com.purohit.priest.LocalPriestLanguage.current
+    fun tr(en: String, te: String, hi: String) = when (language) { com.purohit.contracts.i18n.AppLanguage.TELUGU -> te; com.purohit.contracts.i18n.AppLanguage.HINDI -> hi; else -> en }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(reloadKey) {
+        loading = true
+        directoryError = null
         val res = PurohitApiClient.fetchPriestsList()
         res.onSuccess { dirList ->
             run {
@@ -57,7 +62,7 @@ fun ColleagueReferralModal(
                     )
                 }
             }
-        }.onFailure { directoryError = "Could not load colleagues. Please reopen to retry." }
+        }.onFailure { directoryError = tr("Could not load colleagues.", "సహచరులను పొందలేకపోయాము.", "सहयोगी नहीं मिले।") }
         loading = false
     }
 
@@ -82,14 +87,14 @@ fun ColleagueReferralModal(
                 .padding(20.dp)
         ) {
             Text(
-                text = "🤝 Delegate Booking to Colleague Purohit",
+                text = "🤝 " + tr("Hand over to a colleague", "సహచరునికి అప్పగించండి", "सहयोगी को सौंपें"),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Request reassignment of '$bookingTitle' to a colleague.",
+                text = tr("Ask a colleague to take '$bookingTitle'.", "'$bookingTitle' తీసుకోమని సహచరుని అడగండి.", "'$bookingTitle' लेने के लिए सहयोगी से कहें।"),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -106,20 +111,23 @@ fun ColleagueReferralModal(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("⏰ Slot to Reassign:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+                    Text("⏰ " + tr("Time", "సమయం", "समय"), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
                     Text(scheduledSlot, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall)
                 }
             }
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            Text("Select a colleague:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+            Text(tr("Choose a colleague:", "సహచరుని ఎంచుకోండి:", "सहयोगी चुनें:"), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
 
             Spacer(modifier = Modifier.height(8.dp))
 
             if (loading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            else if (directoryError != null) Text(directoryError!!, color = MaterialTheme.colorScheme.error)
-            else if (colleagues.isEmpty()) Text("No colleagues available", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            else if (directoryError != null) Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(directoryError!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f))
+                TextButton(onClick = { reloadKey++ }) { Text(tr("Retry", "మళ్లీ ప్రయత్నించండి", "फिर प्रयास करें")) }
+            }
+            else if (colleagues.isEmpty()) Text(tr("No colleagues available", "సహచరులు అందుబాటులో లేరు", "कोई सहयोगी उपलब्ध नहीं"), color = MaterialTheme.colorScheme.onSurfaceVariant)
             colleagues.forEach { c ->
                 val isSelected = selectedColleague?.id == c.id
                 Card(
@@ -154,7 +162,7 @@ fun ColleagueReferralModal(
             OutlinedTextField(
                 value = reasonText,
                 onValueChange = { reasonText = it },
-                label = { Text("Reason for Colleague Delegation") },
+                label = { Text(tr("Reason", "కారణం", "कारण")) },
                 modifier = Modifier.fillMaxWidth()
             )
 
@@ -180,7 +188,7 @@ fun ColleagueReferralModal(
                             res.onSuccess {
                                 onReferralConfirmed(c.id, c.name, reasonText)
                             }.onFailure {
-                                statusMessage = "Could not reassign the booking. Please try again."
+                                statusMessage = tr("Could not hand over the booking. Please try again.", "బుకింగ్ అప్పగించలేకపోయాము. మళ్లీ ప్రయత్నించండి.", "बुकिंग नहीं सौंपी जा सकी। फिर प्रयास करें।")
                             }
                         }
                     }
@@ -189,7 +197,7 @@ fun ColleagueReferralModal(
                 modifier = Modifier.fillMaxWidth().height(48.dp),
                 shape = RoundedCornerShape(10.dp)
             ) {
-                Text(if (isSubmitting) "Reassigning..." else "Confirm reassignment")
+                Text(if (isSubmitting) tr("Handing over...", "అప్పగిస్తోంది...", "सौंपा जा रहा है...") else tr("Confirm handover", "అప్పగింతను నిర్ధారించండి", "सौंपना पक्का करें"))
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -198,7 +206,7 @@ fun ColleagueReferralModal(
                 onClick = onDismiss,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Cancel")
+                Text(tr("Cancel", "రద్దు", "रद्द करें"))
             }
         }
     }

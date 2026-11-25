@@ -1,5 +1,6 @@
 package com.purohit.contracts.temple
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -13,74 +14,74 @@ data class Temple(
     val state: String = "Telangana",
     val latitude: Double = 17.3850,
     val longitude: Double = 78.4867,
-    val bannerImageUrl: String = "",
+    @SerialName("banner_image_url") val bannerImageUrl: String = "",
     val timings: String = "06:00 AM - 08:30 PM",
-    val contactPhone: String = "",
-    val isActive: Boolean = true
+    @SerialName("contact_phone") val contactPhone: String = "",
+    @SerialName("is_active") val isActive: Boolean = true
 )
 
 @Serializable
 data class TempleVipPuja(
     val id: String,
-    val templeId: String,
+    @SerialName("temple_id") val templeId: String,
     val title: String,
     val description: String = "",
     val price: Double,
-    val priceMinor: Long = 0L,
+    @SerialName("price_minor") val priceMinor: Long = 0L,
     val currency: String = "INR",
-    val maxDailySlots: Int = 20,
-    val durationMinutes: Int = 45,
-    val isOnlineVideoCall: Boolean = false,
-    val isActive: Boolean = true
+    @SerialName("max_daily_slots") val maxDailySlots: Int = 20,
+    @SerialName("duration_minutes") val durationMinutes: Int = 45,
+    @SerialName("is_online_video_call") val isOnlineVideoCall: Boolean = false,
+    @SerialName("is_active") val isActive: Boolean = true
 )
 
 @Serializable
 data class TempleVipTicket(
     val id: String,
-    val templeId: String,
-    val vipPujaId: String,
-    val userId: String?,
-    val devoteeName: String,
-    val devoteeGotram: String? = null,
-    val devoteeNakshatram: String? = null,
-    val devoteePhone: String,
-    val visitDate: String, // YYYY-MM-DD
-    val slotTime: String,
-    val ticketType: String = "VIP_IN_PERSON", // 'VIP_IN_PERSON' or 'ONLINE_E_POOJA_VIDEO'
-    val qrToken: String,
+    @SerialName("temple_id") val templeId: String,
+    @SerialName("vip_puja_id") val vipPujaId: String,
+    @SerialName("user_id") val userId: String?,
+    @SerialName("devotee_name") val devoteeName: String,
+    @SerialName("devotee_gotram") val devoteeGotram: String? = null,
+    @SerialName("devotee_nakshatram") val devoteeNakshatram: String? = null,
+    @SerialName("devotee_phone") val devoteePhone: String,
+    @SerialName("visit_date") val visitDate: String, // YYYY-MM-DD
+    @SerialName("slot_time") val slotTime: String,
+    @SerialName("ticket_type") val ticketType: String = "VIP_IN_PERSON", // 'VIP_IN_PERSON' or 'ONLINE_E_POOJA_VIDEO'
+    @SerialName("qr_token") val qrToken: String,
     val status: String = "CONFIRMED", // 'CONFIRMED', 'CHECKED_IN', 'COMPLETED', 'CANCELLED'
-    val amountPaid: Double,
-    val amountPaidMinor: Long = 0L,
+    @SerialName("amount_paid") val amountPaid: Double,
+    @SerialName("amount_paid_minor") val amountPaidMinor: Long = 0L,
     val currency: String = "INR",
-    val paymentMode: String = "ONLINE_ESCROW",
-    val checkInTimestamp: String? = null,
-    val createdAt: String = ""
+    @SerialName("payment_mode") val paymentMode: String = "ONLINE_ESCROW",
+    @SerialName("check_in_timestamp") val checkInTimestamp: String? = null,
+    @SerialName("created_at") val createdAt: String = ""
 )
 
 @Serializable
 data class BookTempleTicketRequest(
-    val templeId: String,
-    val vipPujaId: String,
-    val userId: String,
-    val devoteeName: String,
-    val devoteeGotram: String? = null,
-    val devoteeNakshatram: String? = null,
-    val devoteePhone: String,
-    val visitDate: String,
-    val slotTime: String,
-    val ticketType: String = "VIP_IN_PERSON",
-    val amountPaid: Double,
-    val amountPaidMinor: Long = 0L,
+    @SerialName("temple_id") val templeId: String,
+    @SerialName("vip_puja_id") val vipPujaId: String,
+    @SerialName("user_id") val userId: String,
+    @SerialName("devotee_name") val devoteeName: String,
+    @SerialName("devotee_gotram") val devoteeGotram: String? = null,
+    @SerialName("devotee_nakshatram") val devoteeNakshatram: String? = null,
+    @SerialName("devotee_phone") val devoteePhone: String,
+    @SerialName("visit_date") val visitDate: String,
+    @SerialName("slot_time") val slotTime: String,
+    @SerialName("ticket_type") val ticketType: String = "VIP_IN_PERSON",
+    @SerialName("amount_paid") val amountPaid: Double,
+    @SerialName("amount_paid_minor") val amountPaidMinor: Long = 0L,
     val currency: String = "INR",
-    val paymentMode: String = "ONLINE_ESCROW"
+    @SerialName("payment_mode") val paymentMode: String = "ONLINE_ESCROW"
 )
 
 @Serializable
 data class VerifyTicketResponse(
-    val isValid: Boolean,
-    val ticketId: String,
-    val devoteeName: String,
+    @SerialName("is_valid") val isValid: Boolean,
+    @SerialName("ticket_id") val ticketId: String,
+    @SerialName("devotee_name") val devoteeName: String,
     val status: String,
-    val checkInTimestamp: String,
+    @SerialName("check_in_timestamp") val checkInTimestamp: String,
     val message: String
 )

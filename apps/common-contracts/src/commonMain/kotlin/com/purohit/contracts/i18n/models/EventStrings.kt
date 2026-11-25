@@ -40,6 +40,7 @@ interface EventStrings {
     val waitingForPriest: String
     val expiresInTemplate: String
     val requestExpired: String
+    val cardActive: String
     val priestDeclined: String
     val bookingConfirmed: String
     val bookingCodeTitle: String
@@ -54,6 +55,7 @@ interface EventStrings {
     val cancelConfirm: String
     val ritualCompleted: String
     val errorPriestUnavailable: String
+    val errorPriestBusyAtTime: String
     val errorInvalidSchedule: String
     val retryAction: String
 

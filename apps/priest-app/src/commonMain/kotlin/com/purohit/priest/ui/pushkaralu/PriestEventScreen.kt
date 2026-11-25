@@ -148,7 +148,7 @@ fun PriestEventScreen(event: EventConfig?, language: AppLanguage, strings: Event
                         Surface(color = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary, shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)) {
                             Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                 Text(strings.cardTitle, fontWeight = FontWeight.Bold)
-                                if (card != null) Text(card.status, fontWeight = FontWeight.Bold)
+                                if (card != null) Text(if (card.status == "ACTIVE") strings.cardActive else card.status, fontWeight = FontWeight.Bold)
                             }
                         }
                         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {

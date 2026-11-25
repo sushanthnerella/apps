@@ -55,6 +55,9 @@ fun RapidoIncomingAlertModal(
     var timeLeftSeconds by remember { mutableStateOf(secondsToDeadline() ?: 45) }
     val isTelugu = currentLanguage == AppLanguage.TELUGU
     val isHindi = currentLanguage == AppLanguage.HINDI
+    // Decline needs a second tap so a slip next to Accept does not drop the request.
+    var declineArmed by remember { mutableStateOf(false) }
+    LaunchedEffect(declineArmed) { if (declineArmed) { kotlinx.coroutines.delay(4_000); declineArmed = false } }
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
 
@@ -239,12 +242,12 @@ fun RapidoIncomingAlertModal(
                     horizontalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     OutlinedButton(
-                        onClick = onReject,
+                        onClick = { if (declineArmed) onReject() else declineArmed = true },
                         enabled = !isSubmitting,
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Red)
                     ) {
-                        Text(strings.dispatch.declineDutyCTA)
+                        Text(if (declineArmed) (if (isTelugu) "నిర్ధారించడానికి మళ్లీ నొక్కండి" else if (isHindi) "पुष्टि के लिए फिर दबाएं" else "Tap again to decline") else strings.dispatch.declineDutyCTA)
                     }
                     Button(
                         onClick = onAccept,

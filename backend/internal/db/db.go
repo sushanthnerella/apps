@@ -731,15 +731,15 @@ func (s *Storage) CreateBooking(req models.BookingCreateRequest) (string, string
 		INSERT INTO bookings (
 			user_id, priest_id, pooja_id, booking_type, status, escrow_status, 
 			total_amount, total_amount_minor, include_samagri_kit, completion_otp, event_address, latitude, longitude,
-			scheduled_date, slot_time, devotee_gotram, devotee_nakshatram, devotee_rashi, sankalpam_purpose
+			scheduled_date, slot_time, devotee_gotram, devotee_nakshatram, devotee_rashi, sankalpam_purpose, request_expires_at
 		)
-		VALUES ($1, $2, $3, $4, 'REQUESTED', 'HELD_IN_ESCROW', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+		VALUES ($1, $2, $3, $4, 'REQUESTED', 'HELD_IN_ESCROW', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW() + make_interval(secs => $18))
 		RETURNING id;
 	`
 	err = tx.QueryRowContext(ctx, query,
 		req.UserID, priestIDVal, poojaIDVal, req.BookingType,
 		req.TotalAmount, req.TotalAmountMinor, req.IncludeSamagriKit, otp, req.EventAddress, req.Latitude, req.Longitude,
-		schedDate, slotTime, gotram, nakshatram, rashi, purpose,
+		schedDate, slotTime, gotram, nakshatram, rashi, purpose, NormalRequestTTL.Seconds(),
 	).Scan(&bookingID)
 	if err != nil {
 		_ = tx.Rollback()

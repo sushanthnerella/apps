@@ -247,6 +247,7 @@ fun EventRequestScreen(
                                 error = when ((e as? EventApiException)?.code) {
                                     EventErrorCodes.BOOKING_DISABLED -> strings.bookingsPaused
                                     EventErrorCodes.PRIEST_UNAVAILABLE, EventErrorCodes.SERVICE_UNAVAILABLE -> strings.errorPriestUnavailable
+                                    EventErrorCodes.PRIEST_BUSY -> strings.errorPriestBusyAtTime
                                     EventErrorCodes.INVALID_SCHEDULE -> strings.errorInvalidSchedule
                                     else -> strings.noPriestsAvailable
                                 }
@@ -269,6 +270,8 @@ internal fun eventBookingPhase(status: String, expiresAt: Instant?, now: Instant
     "ACCEPTED", "IN_TRANSIT", "ARRIVED" -> EventBookingPhase.CONFIRMED
     "POOJA_STARTED" -> EventBookingPhase.STARTED
     "COMPLETED" -> EventBookingPhase.COMPLETED
+    // The server expires unanswered requests as CANCELLED; past the deadline that means expired.
+    "CANCELLED" -> if (expiresAt != null && now > expiresAt) EventBookingPhase.EXPIRED else EventBookingPhase.CANCELLED
     else -> EventBookingPhase.CANCELLED
 }
 
@@ -280,8 +283,13 @@ fun EventBookingScreen(
     val expiresAt = remember(booking.requestExpiresAt) { runCatching { Instant.parse(booking.requestExpiresAt) }.getOrNull() }
     var status by remember { mutableStateOf(booking.status) }
     var title by remember { mutableStateOf("") }
+    var scheduledText by remember { mutableStateOf("") }
     var now by remember { mutableStateOf(Clock.System.now()) }
     var confirmCancel by remember { mutableStateOf(false) }
+    var isCancelling by remember { mutableStateOf(false) }
+    var cancelError by remember { mutableStateOf<String?>(null) }
+    val language = com.purohit.devotee.LocalAppLanguage.current
+    fun tr(en: String, te: String, hi: String) = when (language) { AppLanguage.TELUGU -> te; AppLanguage.HINDI -> hi; else -> en }
     val scope = rememberCoroutineScope()
     val phase = eventBookingPhase(status, expiresAt, now)
 
@@ -289,7 +297,7 @@ fun EventBookingScreen(
         var wait = 4_000L
         while (true) {
             PurohitApiClient.fetchBookingDetails(booking.bookingId)
-                .onSuccess { status = it.status; title = it.pooja_title; wait = 4_000L }
+                .onSuccess { status = it.status; title = it.pooja_title; scheduledText = listOf(it.scheduled_date, it.slot_time).filter { v -> v.isNotBlank() }.joinToString(" • "); wait = 4_000L }
                 .onFailure { wait = (wait * 2).coerceAtMost(30_000L) }
             if (eventBookingPhase(status, expiresAt, Clock.System.now()) in setOf(EventBookingPhase.COMPLETED, EventBookingPhase.CANCELLED, EventBookingPhase.EXPIRED)) break
             delay(wait)
@@ -341,6 +349,7 @@ fun EventBookingScreen(
         Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(14.dp)) {
             Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (title.isNotBlank()) Text(title, fontWeight = FontWeight.Bold)
+                if (scheduledText.isNotBlank()) Text("📅 $scheduledText", fontWeight = FontWeight.SemiBold)
                 Text(priestName)
                 Text("${strings.meetAt}: $ghatName", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("${strings.dakshinaLabel}: ${formatMinorToRupees(booking.totalAmountMinor)}", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -352,8 +361,9 @@ fun EventBookingScreen(
             Button(onClick = { onChat(booking.chatRoomId) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(strings.chatAction) }
         }
         if (phase == EventBookingPhase.WAITING || phase == EventBookingPhase.CONFIRMED) {
-            TextButton(onClick = { confirmCancel = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(strings.cancelRequest) }
+            TextButton(onClick = { confirmCancel = true }, enabled = !isCancelling, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(strings.cancelRequest) }
         }
+        cancelError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
         if (phase in setOf(EventBookingPhase.COMPLETED, EventBookingPhase.CANCELLED, EventBookingPhase.EXPIRED)) {
             Button(onClick = onDone, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(strings.chooseGhatTitle) }
         }
@@ -365,7 +375,15 @@ fun EventBookingScreen(
         confirmButton = {
             TextButton(onClick = {
                 confirmCancel = false
-                scope.launch { PurohitApiClient.updateBookingStatus(booking.bookingId, "CANCELLED").onSuccess { status = "CANCELLED" } }
+                isCancelling = true
+                cancelError = null
+                scope.launch {
+                    try {
+                        PurohitApiClient.updateBookingStatus(booking.bookingId, "CANCELLED")
+                            .onSuccess { status = "CANCELLED" }
+                            .onFailure { cancelError = tr("Could not cancel the booking. Please try again.", "బుకింగ్ రద్దు కాలేదు. మళ్లీ ప్రయత్నించండి.", "बुकिंग रद्द नहीं हुई। फिर प्रयास करें।") }
+                    } finally { isCancelling = false }
+                }
             }) { Text(strings.cancelRequest) }
         },
         dismissButton = { TextButton(onClick = { confirmCancel = false }) { Text(com.purohit.devotee.LocalAppStrings.current.common.closeAction) } }

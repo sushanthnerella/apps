@@ -190,6 +190,8 @@ func writeEventError(w http.ResponseWriter, err error) {
 		status, code = http.StatusForbidden, "not_approved"
 	case errors.Is(err, db.ErrPriestUnavailable):
 		status, code = http.StatusConflict, "priest_unavailable"
+	case errors.Is(err, db.ErrPriestBusy):
+		status, code = http.StatusConflict, "priest_busy"
 	case errors.Is(err, db.ErrServiceUnavailable):
 		status, code = http.StatusConflict, "service_unavailable"
 	case errors.Is(err, db.ErrInvalidSchedule):

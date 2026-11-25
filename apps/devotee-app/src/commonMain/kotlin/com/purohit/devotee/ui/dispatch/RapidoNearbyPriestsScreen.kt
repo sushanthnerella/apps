@@ -50,6 +50,7 @@ fun RapidoNearbyPriestsScreen(
 ) {
     val language = LocalAppLanguage.current
     fun tr(en: String, te: String, hi: String) = when (language) { AppLanguage.TELUGU -> te; AppLanguage.HINDI -> hi; else -> en }
+    var locationPermissionDenied by remember { mutableStateOf(false) }
     var nearbyPriests by remember { mutableStateOf<List<NearbyPriestItem>>(emptyList()) }
     var selectedPriest by remember { mutableStateOf<NearbyPriestItem?>(null) }
     var priestToConfirm by remember { mutableStateOf<NearbyPriestItem?>(null) }
@@ -57,6 +58,8 @@ fun RapidoNearbyPriestsScreen(
     var bookedPriest by remember { mutableStateOf<NearbyPriestItem?>(null) }
     var completionOtp by remember { mutableStateOf("") }
     var activeBookingId by remember { mutableStateOf("") }
+    var confirmCancel by remember { mutableStateOf(false) }
+    var isCancelling by remember { mutableStateOf(false) }
     var activeChatRoomId by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     val coroutineScope = rememberCoroutineScope()
@@ -168,6 +171,7 @@ fun RapidoNearbyPriestsScreen(
     fun loadNearby() {
         isLoading = true
         errorMessage = null
+        locationPermissionDenied = false
         nearbyPriests = emptyList()
         selectedPriest = null
         locationAccess.request { location ->
@@ -179,17 +183,47 @@ fun RapidoNearbyPriestsScreen(
                         nearbyPriests = list
                         selectedPriest = list.firstOrNull()
                         errorMessage = null
-                    }.onFailure { errorMessage = it.message ?: "Could not load nearby priests." }
+                    }.onFailure { errorMessage = tr("Could not load nearby priests. Please try again.", "సమీప పురోహితులను పొందలేకపోయాము. మళ్లీ ప్రయత్నించండి.", "पास के पुरोहित नहीं मिले। फिर प्रयास करें।") }
                 }
             }.onFailure {
                 isLoading = false
-                errorMessage = it.message ?: "Could not get your location. Please try again."
+                locationPermissionDenied = it.message.orEmpty().contains("permission", ignoreCase = true)
+                errorMessage = if (locationPermissionDenied) tr(
+                    "Location permission is off. Allow location for Puja Vaahini in your phone Settings (Apps → Puja Vaahini → Permissions), then tap Try again.",
+                    "లొకేషన్ అనుమతి ఆఫ్‌లో ఉంది. ఫోన్ సెట్టింగ్స్‌లో (యాప్స్ → Puja Vaahini → అనుమతులు) లొకేషన్ అనుమతించి, మళ్లీ ప్రయత్నించండి నొక్కండి.",
+                    "लोकेशन अनुमति बंद है। फोन की सेटिंग्स (ऐप्स → Puja Vaahini → अनुमतियाँ) में लोकेशन की अनुमति दें, फिर दोबारा प्रयास करें दबाएँ।"
+                ) else tr("Could not get your location. Please turn on location and try again.", "మీ స్థానం పొందలేకపోయాము. లొకేషన్ ఆన్ చేసి మళ్లీ ప్రయత్నించండి.", "आपका स्थान नहीं मिला। लोकेशन चालू करके फिर प्रयास करें।")
             }
         }
     }
 
     LaunchedEffect(poojaTitle) {
         loadNearby()
+    }
+
+    if (confirmCancel) {
+        AlertDialog(
+            onDismissRequest = { confirmCancel = false },
+            title = { Text(tr("Cancel this request?", "ఈ అభ్యర్థనను రద్దు చేయాలా?", "यह अनुरोध रद्द करें?")) },
+            text = { Text(tr("The priest will no longer receive your request.", "పురోహితునికి మీ అభ్యర్థన ఇక చేరదు.", "पुरोहित को अब आपका अनुरोध नहीं मिलेगा।")) },
+            confirmButton = { TextButton(onClick = {
+                confirmCancel = false
+                val bookingId = activeBookingId
+                if (bookingId.isNotBlank() && !isCancelling) {
+                    isCancelling = true
+                    coroutineScope.launch {
+                        try {
+                            PurohitApiClient.cancelBooking(bookingId, "DEVOTEE_CANCELLED", idempotencyKey = cancelIntentKey).onSuccess {
+                                isAwaitingPriestAcceptance = false
+                                activeBookingId = ""
+                                cancelIntentKey = IdempotencyKeyGenerator.generate()
+                            }.onFailure { errorMessage = tr("Could not cancel the request. Please try again.", "అభ్యర్థన రద్దు కాలేదు. మళ్లీ ప్రయత్నించండి.", "अनुरोध रद्द नहीं हुआ। फिर प्रयास करें।") }
+                        } finally { isCancelling = false }
+                    }
+                }
+            }) { Text(tr("Cancel request", "అభ్యర్థన రద్దు చేయండి", "अनुरोध रद्द करें"), color = Color.Red) } },
+            dismissButton = { TextButton(onClick = { confirmCancel = false }) { Text(tr("Keep waiting", "వేచి ఉండండి", "प्रतीक्षा करें")) } }
+        )
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -199,7 +233,13 @@ fun RapidoNearbyPriestsScreen(
                 subtitle = tr("Finding priests near your location…", "మీ దగ్గర పురోహితులను వెతుకుతున్నాము…", "आपके पास पुरोहित खोज रहे हैं…")
             )
         } else if (nearbyPriests.isEmpty() && errorMessage != null) {
-            if (errorMessage!!.contains("connect", ignoreCase = true) || errorMessage!!.contains("network", ignoreCase = true)) {
+            if (locationPermissionDenied) {
+                Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(errorMessage!!, style = MaterialTheme.typography.bodyLarge)
+                    Spacer(Modifier.height(16.dp))
+                    Button(onClick = { loadNearby() }) { Text(tr("Try again", "మళ్లీ ప్రయత్నించండి", "दोबारा प्रयास करें")) }
+                }
+            } else if (errorMessage!!.contains("connect", ignoreCase = true) || errorMessage!!.contains("network", ignoreCase = true)) {
                 NoInternetScreen(
                     strings = strings,
                     onRetry = { loadNearby() },
@@ -277,16 +317,8 @@ fun RapidoNearbyPriestsScreen(
                             Text(tr("Waiting for the priest to respond.", "పురోహితుని సమాధానం కోసం వేచి ఉన్నాము.", "पुरोहित के उत्तर की प्रतीक्षा है।"), style = MaterialTheme.typography.bodySmall)
                             Spacer(modifier = Modifier.height(12.dp))
                             OutlinedButton(
-                                onClick = {
-                                    if (activeBookingId.isNotBlank()) coroutineScope.launch {
-                                        PurohitApiClient.cancelBooking(activeBookingId, "DEVOTEE_CANCELLED", idempotencyKey = cancelIntentKey).onSuccess {
-                                            isAwaitingPriestAcceptance = false
-                                            activeBookingId = ""
-                                            cancelIntentKey = IdempotencyKeyGenerator.generate()
-                                        }.onFailure { errorMessage = tr("Could not cancel the request. Please try again.", "అభ్యర్థన రద్దు కాలేదు. మళ్లీ ప్రయత్నించండి.", "अनुरोध रद्द नहीं हुआ। फिर प्रयास करें।") }
-                                    }
-                                },
-                                enabled = activeBookingId.isNotBlank(),
+                                onClick = { confirmCancel = true },
+                                enabled = activeBookingId.isNotBlank() && !isCancelling,
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Red),
                                 shape = RoundedCornerShape(8.dp)
                             ) {
@@ -303,11 +335,11 @@ fun RapidoNearbyPriestsScreen(
                         colors = CardDefaults.cardColors(containerColor = Color(0xFFDCFCE7))
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
-                            Text("✅ PUROHIT ACCEPTED & DISPATCHED!", fontWeight = FontWeight.Bold, color = Color(0xFF15803D), style = MaterialTheme.typography.titleMedium)
-                            Text("${bookedPriest?.full_name} accepted your request for ${selectedDate.split("-").reversed().joinToString("/")}.")
+                            Text("✅ " + tr("Priest accepted your request", "పురోహితులు మీ అభ్యర్థనను అంగీకరించారు", "पुरोहित ने आपका अनुरोध स्वीकार किया"), fontWeight = FontWeight.Bold, color = Color(0xFF15803D), style = MaterialTheme.typography.titleMedium)
+                            Text("${bookedPriest?.full_name} · ${selectedDate.split("-").reversed().joinToString("/")}")
                             Spacer(modifier = Modifier.height(8.dp))
-                            Text("Slot: $selectedSlot")
-                            Text("Phone: ${bookedPriest?.phone}")
+                            Text("${tr("Time", "సమయం", "समय")}: $selectedSlot IST")
+                            Text("${tr("Phone", "ఫోన్", "फ़ोन")}: ${bookedPriest?.phone}")
                             Spacer(modifier = Modifier.height(10.dp))
                             Surface(
                                 color = Color.White,
@@ -328,7 +360,7 @@ fun RapidoNearbyPriestsScreen(
                                 shape = RoundedCornerShape(10.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                             ) {
-                                Text("View booking status & chat")
+                                Text(tr("View booking status & chat", "బుకింగ్ స్థితి & చాట్ చూడండి", "बुकिंग स्थिति और चैट देखें"))
                             }
                         }
                     }
@@ -382,7 +414,7 @@ fun RapidoNearbyPriestsScreen(
                             Text(slotMessage, style = MaterialTheme.typography.bodySmall)
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 items(availableSlots) { slot ->
-                                    val label = "${slot.start_time.take(5)} - ${slot.end_time.take(5)}"
+                                    val label = "${to12h(slot.start_time)} – ${to12h(slot.end_time)}"
                                     FilterChip(selected = chosenSlot?.id == slot.id, onClick = { chosenSlot = slot; selectedSlot = label }, label = { Text(label) })
                                 }
                             }
@@ -543,6 +575,14 @@ private fun IndiaDatePicker(value: String, language: AppLanguage, strings: Strin
         DatePickerDialog(onDismissRequest = { showPicker = false }, confirmButton = { TextButton(onClick = {
             picker.selectedDateMillis?.let { onDateSelected(Instant.fromEpochMilliseconds(it).toLocalDateTime(TimeZone.UTC).date.toString()) }
             showPicker = false
-        }) { Text("OK") } }, dismissButton = { TextButton(onClick = { showPicker = false }) { Text(strings.common.cancelAction) } }) { DatePicker(state = picker, showModeToggle = false) }
+        }) { Text(when (language) { AppLanguage.TELUGU -> "సరే"; AppLanguage.HINDI -> "ठीक है"; else -> "OK" }) } }, dismissButton = { TextButton(onClick = { showPicker = false }) { Text(strings.common.cancelAction) } }) { DatePicker(state = picker, showModeToggle = false) }
     }
+}
+
+/** "14:30" -> "2:30 PM" */
+private fun to12h(hhmm: String): String {
+    val parts = hhmm.take(5).split(":")
+    val h = parts.getOrNull(0)?.toIntOrNull() ?: return hhmm
+    val m = parts.getOrNull(1) ?: "00"
+    return "${if (h % 12 == 0) 12 else h % 12}:$m ${if (h < 12) "AM" else "PM"}"
 }

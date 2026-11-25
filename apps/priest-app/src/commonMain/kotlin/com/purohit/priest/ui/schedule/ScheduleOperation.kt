@@ -9,13 +9,13 @@ internal fun CoroutineScope.publishThenRefresh(
     publish: suspend () -> Result<Unit>,
     refresh: suspend () -> Unit,
     setLoading: (Boolean) -> Unit,
-    onFailure: () -> Unit
+    onFailure: (Throwable) -> Unit
 ): Job {
     setLoading(true)
     return launch {
         try {
             val result = publish()
-            if (result.isSuccess) refresh() else onFailure()
+            result.fold(onSuccess = { refresh() }, onFailure = onFailure)
         } finally {
             setLoading(false)
         }

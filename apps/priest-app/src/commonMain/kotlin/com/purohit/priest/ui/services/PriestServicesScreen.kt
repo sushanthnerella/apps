@@ -1,5 +1,7 @@
 package com.purohit.priest.ui.services
 
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -106,7 +108,7 @@ fun PriestServicesScreen(
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         } else if (loadError != null) {
             Text(loadError!!, color = MaterialTheme.colorScheme.error)
-            TextButton(onClick = { loadServices() }) { Text("Retry") }
+            TextButton(onClick = { loadServices() }) { Text((if (isTelugu) "మళ్లీ ప్రయత్నించండి" else if (isHindi) "फिर प्रयास करें" else "Retry")) }
         } else if (customServices.isEmpty()) {
             Text(if (isTelugu) "సేవలు ఇంకా లేవు" else if (isHindi) "अभी कोई सेवा नहीं है" else "No services yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -197,19 +199,30 @@ fun PriestServicesScreen(
                     )
                     OutlinedTextField(
                         value = newDakshina,
-                        onValueChange = { newDakshina = it },
+                        onValueChange = { newDakshina = it.filter { c -> c.isDigit() || c == '.' }.take(9) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        isError = newDakshina.isNotBlank() && newDakshina.toDoubleOrNull() == null,
+                        prefix = { Text("₹") },
                         label = { Text("${strings.catalog.dakshinaLabel} (₹)") },
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
                         value = newSamagriFee,
-                        onValueChange = { newSamagriFee = it },
+                        onValueChange = { newSamagriFee = it.filter { c -> c.isDigit() || c == '.' }.take(9) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        isError = newSamagriFee.isNotBlank() && newSamagriFee.toDoubleOrNull() == null,
+                        prefix = { Text("₹") },
                         label = { Text(if (isTelugu) "సామాగ్రి కిట్ ఖర్చు (₹)" else if (isHindi) "सामग्री किट मूल्य (₹)" else "Samagri Kit Included Cost (₹)") },
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
                         value = newDuration,
-                        onValueChange = { newDuration = it },
+                        onValueChange = { newDuration = it.filter { c -> c.isDigit() }.take(4) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        isError = newDuration.isNotBlank() && (newDuration.toIntOrNull() ?: 0) <= 0,
                         label = { Text("${strings.catalog.durationLabel} (${strings.catalog.durationMinutes})") },
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -240,12 +253,12 @@ fun PriestServicesScreen(
                                     showCreateModal = false
                                     loadServices()
                                 }.onFailure {
-                                    createError = "Could not save the service. Please try again."
+                                    createError = (if (isTelugu) "సేవను సేవ్ చేయలేకపోయాము. మళ్లీ ప్రయత్నించండి." else if (isHindi) "सेवा सहेजी नहीं जा सकी। फिर प्रयास करें।" else "Could not save the service. Please try again.")
                                 }
                                 isSubmitting = false
                             }
                         } else {
-                            createError = "Enter a title, valid prices and a duration."
+                            createError = (if (isTelugu) "పేరు, సరైన ధరలు (₹), నిమిషాల్లో సమయం నమోదు చేయండి." else if (isHindi) "नाम, सही मूल्य (₹) और मिनटों में अवधि दर्ज करें।" else "Enter a title, valid prices (₹) and a duration in minutes.")
                         }
                     },
                     enabled = !isSubmitting
