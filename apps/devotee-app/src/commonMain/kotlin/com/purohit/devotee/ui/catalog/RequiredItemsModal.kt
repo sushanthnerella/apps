@@ -163,7 +163,7 @@ fun RequiredItemsModal(
         },
         confirmButton = {
             Button(onClick = onDismiss) {
-                Text("Got It")
+                Text(when (com.purohit.devotee.LocalAppLanguage.current) { com.purohit.contracts.i18n.AppLanguage.TELUGU -> "సరే"; com.purohit.contracts.i18n.AppLanguage.HINDI -> "ठीक है"; else -> "Got it" })
             }
         }
     )

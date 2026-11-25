@@ -55,6 +55,21 @@ fun PoojaCatalogScreen(
 
     val coroutineScope = rememberCoroutineScope()
 
+    // Category names come from the catalog data in English; show them in the chosen language.
+    fun categoryLabel(category: String): String {
+        val names = mapOf(
+            "Major Occasion" to ("శుభకార్యాలు" to "मांगलिक"),
+            "Prosperity & Devotion" to ("సౌభాగ్యం & భక్తి" to "समृद्धि और भक्ति"),
+            "Obstacle Removal" to ("విఘ్న నివారణ" to "विघ्न निवारण"),
+            "Sanskaras" to ("సంస్కారాలు" to "संस्कार"),
+            "Astrological Remedies" to ("జ్యోతిష పరిహారాలు" to "ज्योतिष उपाय"),
+            "Health & Protection" to ("ఆరోగ్యం & రక్షణ" to "स्वास्थ्य और रक्षा"),
+            "Special Ritual" to ("ప్రత్యేక పూజ" to "विशेष अनुष्ठान")
+        )
+        val pair = names[category] ?: return category
+        return if (isTelugu) pair.first else if (isHindi) pair.second else category
+    }
+
     val categories = remember(currentLanguage) {
         if (isTelugu) {
             listOf("అన్నీ", "శుభకార్యాలు", "సౌభాగ్యం", "విఘ్న నివారణ", "సంస్కారాలు", "ఆరోగ్యం")
@@ -75,7 +90,9 @@ fun PoojaCatalogScreen(
                 poojaList = items
                 catalogError = null
             }.onFailure { err ->
-                catalogError = err.message
+                val raw = err.message.orEmpty()
+                val networkLike = listOf("connect", "network", "timeout", "unable to resolve").any { raw.contains(it, ignoreCase = true) }
+                catalogError = if (networkLike) "network" else (if (isTelugu) "పూజలను పొందలేకపోయాము. మళ్లీ ప్రయత్నించండి." else if (currentLanguage == AppLanguage.HINDI) "पूजाएं नहीं मिलीं। फिर प्रयास करें।" else "Could not load poojas. Please try again.")
                 poojaList = emptyList()
             }
         }
@@ -177,7 +194,7 @@ fun PoojaCatalogScreen(
                 modifier = Modifier.weight(1f)
             )
         } else if (poojaList.isEmpty() && catalogError != null) {
-            if (catalogError!!.contains("connect", ignoreCase = true) || catalogError!!.contains("network", ignoreCase = true) || catalogError!!.contains("timeout", ignoreCase = true)) {
+            if (catalogError == "network") {
                 NoInternetScreen(
                     strings = strings,
                     onRetry = { loadCatalog() },
@@ -269,7 +286,7 @@ fun PoojaCatalogScreen(
                             Spacer(modifier = Modifier.height(4.dp))
 
                             Text(
-                                text = pkg.category,
+                                text = categoryLabel(pkg.category),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

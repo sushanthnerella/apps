@@ -414,10 +414,12 @@ object PurohitApiClient {
         sessionVault = vault
         authToken = vault.getToken().orEmpty()
     }
+    var onAuthenticated: (() -> Unit)? = null
     var authToken: String = ""
         set(value) {
             if (value.isBlank()) sessionVault?.clear() else sessionVault?.saveToken(value)
             field = value
+            if (value.isNotBlank()) onAuthenticated?.invoke()
         }
     var currentProfile: DevoteeProfilePayload? = null
 

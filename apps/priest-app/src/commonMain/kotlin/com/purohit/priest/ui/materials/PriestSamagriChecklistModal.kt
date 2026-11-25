@@ -15,6 +15,8 @@ import androidx.compose.ui.unit.dp
 import com.purohit.priest.network.BookingMaterialPayload
 import com.purohit.priest.network.PurohitApiClient
 import kotlinx.coroutines.launch
+import com.purohit.contracts.i18n.AppLanguage
+import com.purohit.priest.LocalPriestLanguage
 
 @Composable
 fun PriestSamagriChecklistModal(
@@ -32,7 +34,11 @@ fun PriestSamagriChecklistModal(
     var showAddItemDialog by remember { mutableStateOf(false) }
     var newItemName by remember { mutableStateOf("") }
     var newItemQty by remember { mutableStateOf("1 set") }
+    var pendingRemove by remember { mutableStateOf<BookingMaterialPayload?>(null) }
 
+    var saveFailed by remember { mutableStateOf(false) }
+    val language = LocalPriestLanguage.current
+    fun tr(en: String, te: String, hi: String) = when (language) { AppLanguage.TELUGU -> te; AppLanguage.HINDI -> hi; else -> en }
     val coroutineScope = rememberCoroutineScope()
 
     LaunchedEffect(bookingId) {
@@ -43,7 +49,7 @@ fun PriestSamagriChecklistModal(
             materials = list
         }.onFailure {
             materials = emptyList()
-            loadError = "Could not load this checklist. Please reopen it to retry."
+            loadError = tr("Could not load this checklist. Please reopen it to retry.", "ఈ జాబితాను పొందలేకపోయాము. మళ్లీ తెరిచి ప్రయత్నించండి.", "यह सूची नहीं मिली। दोबारा खोलकर प्रयास करें।")
         }
     }
 
@@ -60,16 +66,21 @@ fun PriestSamagriChecklistModal(
         }
     }
 
-    fun saveChecklist() {
-        if (loadError != null) return
+    // Saves [updated]; on failure the list goes back to [previous] so nothing looks saved that isn't.
+    fun saveChecklist(updated: List<BookingMaterialPayload> = materials, previous: List<BookingMaterialPayload> = materials) {
+        if (loadError != null || isSaving) return
+        materials = updated
         isSaving = true
         coroutineScope.launch {
-            val res = PurohitApiClient.updateBookingMaterials(bookingId, materials)
+            val res = PurohitApiClient.updateBookingMaterials(bookingId, updated)
             isSaving = false
             res.onSuccess {
-                saveSuccessMessage = "✓ Samagri checklist updated & synced with Cloud DB!"
-            }.onFailure { err ->
-                saveSuccessMessage = "Could not save checklist: ${err.message ?: "Please try again."}"
+                saveFailed = false
+                saveSuccessMessage = tr("✓ Checklist saved.", "✓ జాబితా సేవ్ అయింది.", "✓ सूची सहेजी गई।")
+            }.onFailure {
+                materials = previous
+                saveFailed = true
+                saveSuccessMessage = tr("Could not save the checklist. Please try again.", "జాబితాను సేవ్ చేయలేకపోయాము. మళ్లీ ప్రయత్నించండి.", "सूची सहेजी नहीं जा सकी। फिर प्रयास करें।")
             }
         }
     }
@@ -85,7 +96,7 @@ fun PriestSamagriChecklistModal(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "🧰 Samagri Checklist",
+                        text = "🧰 " + tr("Samagri Checklist", "సామాగ్రి జాబితా", "सामग्री सूची"),
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.primary
@@ -108,12 +119,12 @@ fun PriestSamagriChecklistModal(
                     Tab(
                         selected = selectedTab == 0,
                         onClick = { selectedTab = 0 },
-                        text = { Text("🪔 Sacred Kit (${sacredItems.size})", style = MaterialTheme.typography.labelSmall) }
+                        text = { Text("🪔 ${tr("Sacred Kit", "పూజా కిట్", "पूजा किट")} (${sacredItems.size})", style = MaterialTheme.typography.labelSmall) }
                     )
                     Tab(
                         selected = selectedTab == 1,
                         onClick = { selectedTab = 1 },
-                        text = { Text("🏡 Devotee Home (${householdItems.size})", style = MaterialTheme.typography.labelSmall) }
+                        text = { Text("🏡 ${tr("Devotee Home", "భక్తుని ఇల్లు", "भक्त का घर")} (${householdItems.size})", style = MaterialTheme.typography.labelSmall) }
                     )
                 }
 
@@ -121,13 +132,13 @@ fun PriestSamagriChecklistModal(
 
                 if (saveSuccessMessage != null) {
                     Surface(
-                        color = Color(0xFFDCFCE7),
+                        color = if (saveFailed) MaterialTheme.colorScheme.errorContainer else Color(0xFFDCFCE7),
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
                             text = saveSuccessMessage!!,
-                            color = Color(0xFF15803D),
+                            color = if (saveFailed) MaterialTheme.colorScheme.error else Color(0xFF15803D),
                             style = MaterialTheme.typography.labelSmall,
                             modifier = Modifier.padding(8.dp),
                             fontWeight = FontWeight.Bold
@@ -143,7 +154,7 @@ fun PriestSamagriChecklistModal(
                 } else if (selectedTab == 0) {
                     // TAB 0: Sacred Kit (Priest Bag Checklist)
                     Text(
-                        text = "Check items as you pack them into your ritual travel bag before departure:",
+                        text = tr("Tick each item as you pack it before leaving:", "బయలుదేరే ముందు ప్యాక్ చేసిన ప్రతి వస్తువును టిక్ చేయండి:", "निकलने से पहले पैक की गई हर वस्तु पर टिक करें:"),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -175,13 +186,16 @@ fun PriestSamagriChecklistModal(
                                             style = MaterialTheme.typography.bodySmall
                                         )
                                         Text(
-                                            text = "Qty: ${item.quantity}",
+                                            text = "${tr("Qty", "పరిమాణం", "मात्रा")}: ${item.quantity}",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
                                     if (item.is_included_by_priest) {
-                                        Text("✓ Packed", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                                        Text("✓ " + tr("Packed", "ప్యాక్ అయింది", "पैक हुआ"), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                                    }
+                                    IconButton(onClick = { pendingRemove = item }, enabled = !isSaving) {
+                                        Text("✕", color = MaterialTheme.colorScheme.error)
                                     }
                                 }
                             }
@@ -199,7 +213,7 @@ fun PriestSamagriChecklistModal(
                             modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Text("➕ Add Item", style = MaterialTheme.typography.labelSmall)
+                            Text("➕ " + tr("Add Item", "వస్తువు జోడించండి", "वस्तु जोड़ें"), style = MaterialTheme.typography.labelSmall)
                         }
 
                         Button(
@@ -208,13 +222,13 @@ fun PriestSamagriChecklistModal(
                             shape = RoundedCornerShape(8.dp),
                             enabled = !isSaving
                         ) {
-                            Text(if (isSaving) "Saving..." else "💾 Save Sync", style = MaterialTheme.typography.labelSmall)
+                            Text(if (isSaving) tr("Saving...", "సేవ్ అవుతోంది...", "सहेजा जा रहा है...") else "💾 " + tr("Save", "సేవ్ చేయండి", "सहेजें"), style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 } else {
                     // TAB 1: Devotee Household Items
                     Text(
-                        text = "Standard essentials devotee must arrange at home before your arrival:",
+                        text = tr("Items the devotee must keep ready at home before you arrive:", "మీరు రాకముందే భక్తుడు ఇంట్లో సిద్ధం చేయాల్సినవి:", "आपके आने से पहले भक्त को घर पर तैयार रखनी वस्तुएं:"),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -243,7 +257,7 @@ fun PriestSamagriChecklistModal(
                                             style = MaterialTheme.typography.bodySmall
                                         )
                                         Text(
-                                            text = "Required: ${item.quantity} (Devotee's responsibility)",
+                                            text = "${tr("Needed", "కావాలి", "आवश्यक")}: ${item.quantity}",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -265,14 +279,14 @@ fun PriestSamagriChecklistModal(
                         shape = RoundedCornerShape(8.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
                     ) {
-                        Text("💬 Send Reminder via Devotee Chat")
+                        Text("💬 " + tr("Remind devotee in chat", "చాట్‌లో భక్తునికి గుర్తు చేయండి", "चैट में भक्त को याद दिलाएं"))
                     }
                 }
             }
         },
         confirmButton = {
             OutlinedButton(onClick = onDismiss) {
-                Text("Close")
+                Text(tr("Close", "మూసివేయండి", "बंद करें"))
             }
         }
     )
@@ -281,20 +295,20 @@ fun PriestSamagriChecklistModal(
     if (showAddItemDialog) {
         AlertDialog(
             onDismissRequest = { showAddItemDialog = false },
-            title = { Text("Add Custom Samagri Item", fontWeight = FontWeight.Bold) },
+            title = { Text(tr("Add samagri item", "సామాగ్రి వస్తువు జోడించండి", "सामग्री वस्तु जोड़ें"), fontWeight = FontWeight.Bold) },
             text = {
                 Column {
                     OutlinedTextField(
                         value = newItemName,
                         onValueChange = { newItemName = it },
-                        label = { Text("Samagri Name (e.g. Navagraha Samidhalu)") },
+                        label = { Text(tr("Item name (e.g. Navagraha Samidhalu)", "వస్తువు పేరు (ఉదా: నవగ్రహ సమిధలు)", "वस्तु का नाम (उदा: नवग्रह समिधा)")) },
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedTextField(
                         value = newItemQty,
                         onValueChange = { newItemQty = it },
-                        label = { Text("Quantity (e.g. 1 bundle / 250g)") },
+                        label = { Text(tr("Quantity (e.g. 1 bundle / 250g)", "పరిమాణం (ఉదా: 1 కట్ట / 250గ్రా)", "मात्रा (उदा: 1 गट्ठर / 250 ग्राम)")) },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -310,22 +324,35 @@ fun PriestSamagriChecklistModal(
                                 quantity = newItemQty.trim(),
                                 is_included_by_priest = true
                             )
-                            materials = materials + newItem
                             newItemName = ""
                             newItemQty = "1 set"
                             showAddItemDialog = false
-                            saveChecklist()
+                            saveChecklist(updated = materials + newItem)
                         }
-                    }
+                    },
+                    enabled = !isSaving && newItemName.isNotBlank()
                 ) {
-                    Text("Add & Save")
+                    Text(tr("Add & Save", "జోడించి సేవ్ చేయండి", "जोड़ें और सहेजें"))
                 }
             },
             dismissButton = {
                 OutlinedButton(onClick = { showAddItemDialog = false }) {
-                    Text("Cancel")
+                    Text(tr("Cancel", "రద్దు", "रद्द करें"))
                 }
             }
+        )
+    }
+
+    pendingRemove?.let { item ->
+        AlertDialog(
+            onDismissRequest = { pendingRemove = null },
+            title = { Text(tr("Remove item?", "వస్తువును తొలగించాలా?", "वस्तु हटाएं?")) },
+            text = { Text(item.item_name) },
+            confirmButton = { TextButton(onClick = {
+                pendingRemove = null
+                saveChecklist(updated = materials.filter { it !== item })
+            }) { Text(tr("Remove", "తొలగించు", "हटाएं"), color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { pendingRemove = null }) { Text(tr("Keep", "ఉంచు", "रखें")) } }
         )
     }
 }

@@ -41,6 +41,7 @@ backend/vendor/
 *.out
 
 # Backend local secrets
+/backend/*firebase-adminsdk*.json
 /backend/.env
 /backend/.env.*
 !/backend/.env.example
@@ -49,3 +50,5 @@ backend/vendor/
 /output/
 # Local AI agent scratch notes
 /.agents/
+
+.staging-test-devotee.env

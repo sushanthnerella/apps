@@ -92,7 +92,8 @@ fun LiveTrackingScreen(
                 }
             }
             if (chatRoomId.isNotBlank()) OutlinedButton(onClick = onOpenChat, modifier = Modifier.fillMaxWidth()) { Text(tr("Chat with priest", "పురోహితునితో సంభాషణ", "पुरोहित से बातचीत")) }
-            OutlinedButton(onClick = onCancelBooking, modifier = Modifier.fillMaxWidth()) { Text(tr("Cancel booking", "బుకింగ్ రద్దు చేయండి", "बुकिंग रद्द करें")) }
+            // Server lets devotees cancel only until the priest is on the way (lifecycle/fsm.go).
+            if (status in setOf(null, "REQUESTED", "ACCEPTED", "IN_TRANSIT")) OutlinedButton(onClick = onCancelBooking, modifier = Modifier.fillMaxWidth()) { Text(tr("Cancel booking", "బుకింగ్ రద్దు చేయండి", "बुकिंग रद्द करें")) }
         }
         TextButton(onClick = onBackToHome) { Text(tr("Back to services", "సేవలకు తిరిగి వెళ్లండి", "सेवाओं पर वापस जाएँ")) }
     }

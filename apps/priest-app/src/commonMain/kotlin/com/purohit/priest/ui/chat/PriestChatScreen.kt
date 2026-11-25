@@ -252,7 +252,7 @@ fun PriestChatScreen(
                     OutlinedTextField(
                         value = inputText,
                         onValueChange = { inputText = it },
-                        placeholder = { Text("Message devotee regarding arrival or samagri...") },
+                        placeholder = { Text(when (language) { com.purohit.contracts.i18n.AppLanguage.TELUGU -> "భక్తునికి సందేశం టైప్ చేయండి..."; com.purohit.contracts.i18n.AppLanguage.HINDI -> "भक्त को संदेश लिखें..."; else -> "Message the devotee..." }) },
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(24.dp),
                         singleLine = false,

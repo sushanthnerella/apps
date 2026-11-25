@@ -23,12 +23,13 @@ actual fun rememberLocationAccess(): LocationAccess {
         val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
         val coarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
         if (!fine && !coarse) { done(Result.failure(IllegalStateException("Location permission is required. Enable it in app settings and try again."))); return }
-        val provider = when {
-            fine && manager.isProviderEnabled(LocationManager.GPS_PROVIDER) -> LocationManager.GPS_PROVIDER
-            manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER) -> LocationManager.NETWORK_PROVIDER
-            else -> null
+        // GPS alone fails indoors; ask network (Wi-Fi/cell) in parallel and take whichever answers first.
+        // ponytail: no cached-fix fallback here; priest fixes carry time/accuracy for check-in, so stay fresh.
+        val providers = buildList {
+            if (fine && manager.isProviderEnabled(LocationManager.GPS_PROVIDER)) add(LocationManager.GPS_PROVIDER)
+            if (manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) add(LocationManager.NETWORK_PROVIDER)
         }
-        if (provider == null) { done(Result.failure(IllegalStateException("Turn on device location and try again."))); return }
+        if (providers.isEmpty()) { done(Result.failure(IllegalStateException("Turn on device location and try again."))); return }
         try {
             var finished = false
             val handler = Handler(Looper.getMainLooper())
@@ -37,7 +38,7 @@ actual fun rememberLocationAccess(): LocationAccess {
             listener = LocationListener { location ->
                 if (!finished) { finished = true; handler.removeCallbacks(timeout); manager.removeUpdates(listener); if (kotlin.math.abs(System.currentTimeMillis() - location.time) > 120000L) done(Result.failure(IllegalStateException("Location is out of date. Please try again."))) else done(Result.success(DeviceCoordinates(location.latitude, location.longitude, Instant.fromEpochMilliseconds(location.time).toString(), if (location.hasAccuracy()) location.accuracy.toDouble() else null))) }
             }
-            manager.requestSingleUpdate(provider, listener, Looper.getMainLooper())
+            providers.forEach { manager.requestSingleUpdate(it, listener, Looper.getMainLooper()) }
             handler.postDelayed(timeout, 20000)
         } catch (e: Exception) { done(Result.failure(IllegalStateException("Could not access location. Check your settings and try again."))) }
     }

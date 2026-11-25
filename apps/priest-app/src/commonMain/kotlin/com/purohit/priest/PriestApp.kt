@@ -75,6 +75,7 @@ fun PriestAppRoot() {
     var activeSankalpamPurpose by remember { mutableStateOf("") }
     var activeBookingStatus by remember { mutableStateOf("IN_TRANSIT") }
     var activeBookingType by remember { mutableStateOf("") }
+    var activeRequestExpiresAt by remember { mutableStateOf<String?>(null) }
     var eventConfig by remember { mutableStateOf<com.purohit.contracts.event.EventConfig?>(null) }
 
     var hasSimulatedIncomingAlert by remember { mutableStateOf(false) }
@@ -90,7 +91,9 @@ fun PriestAppRoot() {
     var isNetworkError by remember { mutableStateOf(false) }
     var networkErrorMessage by remember { mutableStateOf("") }
 
-    var currentLanguage by rememberSaveable { mutableStateOf(AppLanguage.TELUGU) } // Default Telugu for priests
+    // Follow the phone language when the app supports it; Telugu stays the default for other languages.
+    var currentLanguage by rememberSaveable { mutableStateOf(when (androidx.compose.ui.text.intl.Locale.current.language) { "en" -> AppLanguage.ENGLISH; "hi" -> AppLanguage.HINDI; else -> AppLanguage.TELUGU }) }
+    fun ptr(en: String, te: String, hi: String) = when (currentLanguage) { AppLanguage.TELUGU -> te; AppLanguage.HINDI -> hi; else -> en }
     val strings = remember(currentLanguage) { LocalizationManager.getStrings(currentLanguage) }
 
     val coroutineScope = rememberCoroutineScope()
@@ -152,7 +155,17 @@ fun PriestAppRoot() {
                     reqRes.onSuccess { bookings ->
                         isNetworkError = false
                         val incoming = bookings.firstOrNull { it.status == "REQUESTED" }
-                        if (incoming != null && incoming.id != activeBookingId) {
+                        // Only reconcile a server-backed alert after a successful poll. A
+                        // failed poll must not dismiss a request, and accepting/declining
+                        // it may be in flight while the poll response arrives.
+                        if (!incomingBusy && !hasActiveBooking && incoming == null &&
+                            hasSimulatedIncomingAlert && activeBookingId.isNotBlank()) {
+                            hasSimulatedIncomingAlert = false
+                            activeBookingId = ""
+                            activeRequestExpiresAt = null
+                            incomingError = null
+                        }
+                        if (!incomingBusy && !hasActiveBooking && incoming != null && incoming.id != activeBookingId) {
                             incomingError = null
                             activeBookingId = incoming.id
                             activePoojaTitle = incoming.pooja_title
@@ -168,6 +181,7 @@ fun PriestAppRoot() {
                             activeSankalpamPurpose = incoming.sankalpam_purpose
                             activeChatRoomId = incoming.chat_room_id
                             activeBookingType = incoming.booking_type
+                            activeRequestExpiresAt = incoming.request_expires_at
                             hasSimulatedIncomingAlert = true
                         }
                     }
@@ -178,7 +192,8 @@ fun PriestAppRoot() {
                         val ongoing = bookings.firstOrNull {
                             it.status in listOf("ACCEPTED", "IN_TRANSIT", "ARRIVED", "POOJA_STARTED", "IN_PROGRESS")
                         }
-                        if (ongoing != null) {
+                        if (ongoing != null && !incomingBusy) {
+                            hasSimulatedIncomingAlert = false
                             activeBookingId = ongoing.id
                             activePoojaTitle = ongoing.pooja_title
                             activeDevoteeName = ongoing.devotee_name
@@ -230,36 +245,36 @@ fun PriestAppRoot() {
                                 NavigationBarItem(
                                     selected = currentScreen == PriestScreen.DUTY_RADAR,
                                     onClick = { currentScreen = PriestScreen.DUTY_RADAR },
-                                    label = { Text(strings.common.tabDuty) },
+                                    label = { Text(strings.common.tabDuty, style = MaterialTheme.typography.labelSmall, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center) },
                                     icon = { Text("⚡") }
                                 )
                                 NavigationBarItem(
                                     selected = currentScreen == PriestScreen.SCHEDULE_WORKBENCH,
                                     onClick = { currentScreen = PriestScreen.SCHEDULE_WORKBENCH },
-                                    label = { Text(strings.common.tabSchedule) },
+                                    label = { Text(strings.common.tabSchedule, style = MaterialTheme.typography.labelSmall, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center) },
                                     icon = { Text("📅") }
                                 )
                                 NavigationBarItem(
                                     selected = currentScreen == PriestScreen.CUSTOM_SERVICES,
                                     onClick = { currentScreen = PriestScreen.CUSTOM_SERVICES },
-                                    label = { Text(strings.common.tabCustomServices) },
+                                    label = { Text(strings.common.tabCustomServices, style = MaterialTheme.typography.labelSmall, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center) },
                                     icon = { Text("📋") }
                                 )
-                                if (eventConfig?.isLive == true || currentScreen == PriestScreen.PUSHKARALU) NavigationBarItem(
+                                if (eventConfig?.isOpenForPriests == true || currentScreen == PriestScreen.PUSHKARALU) NavigationBarItem(
                                     selected = currentScreen == PriestScreen.PUSHKARALU,
                                     onClick = { currentScreen = PriestScreen.PUSHKARALU },
-                                    label = { Text(strings.event.tabEvent) },
+                                    label = { Text(strings.event.tabEvent, style = MaterialTheme.typography.labelSmall, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center) },
                                     icon = { Text("🌊") }
                                 ) else NavigationBarItem(
                                     selected = currentScreen == PriestScreen.LIVE_STUDIO,
                                     onClick = { currentScreen = PriestScreen.LIVE_STUDIO },
-                                    label = { Text("Live Studio") },
+                                    label = { Text("Live Studio", style = MaterialTheme.typography.labelSmall, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center) },
                                     icon = { Text("📹") }
                                 )
                                 NavigationBarItem(
                                     selected = currentScreen == PriestScreen.PROFILE,
                                     onClick = { currentScreen = PriestScreen.PROFILE },
-                                    label = { Text(strings.common.tabProfile) },
+                                    label = { Text(strings.common.tabProfile, style = MaterialTheme.typography.labelSmall, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center) },
                                     icon = { Text("👤") }
                                 )
                             }
@@ -353,7 +368,7 @@ fun PriestAppRoot() {
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
                                                 Text(
-                                                    text = "📧 Password Recovery Email",
+                                                    text = ptr("📧 Password Recovery Email", "📧 పాస్‌వర్డ్ రికవరీ ఈమెయిల్", "📧 पासवर्ड रिकवरी ईमेल"),
                                                     fontWeight = FontWeight.Bold,
                                                     style = MaterialTheme.typography.titleSmall
                                                 )
@@ -378,7 +393,7 @@ fun PriestAppRoot() {
                                                             color = Color(0xFFDCFCE7)
                                                         ) {
                                                             Text(
-                                                                text = "🟢 Verified",
+                                                                text = ptr("🟢 Verified", "🟢 ధృవీకరించబడింది", "🟢 सत्यापित"),
                                                                 color = Color(0xFF15803D),
                                                                 style = MaterialTheme.typography.labelSmall,
                                                                 fontWeight = FontWeight.Bold,
@@ -391,7 +406,7 @@ fun PriestAppRoot() {
                                                             color = Color(0xFFFEF3C7)
                                                         ) {
                                                             Text(
-                                                                text = "⚠️ Unverified",
+                                                                text = ptr("⚠️ Unverified", "⚠️ ధృవీకరించలేదు", "⚠️ असत्यापित"),
                                                                 color = Color(0xFFB45309),
                                                                 style = MaterialTheme.typography.labelSmall,
                                                                 fontWeight = FontWeight.Bold,
@@ -403,16 +418,16 @@ fun PriestAppRoot() {
                                                 Spacer(modifier = Modifier.height(6.dp))
                                                 Text(
                                                     text = if (isVerified) {
-                                                        "Self-service password reset is enabled via single-use reset links sent to this email."
+                                                        ptr("Self-service password reset is enabled via single-use reset links sent to this email.", "ఈ ఈమెయిల్‌కు పంపే లింక్‌తో పాస్‌వర్డ్ రీసెట్ చేయవచ్చు.", "इस ईमेल पर भेजे गए लिंक से पासवर्ड रीसेट कर सकते हैं।")
                                                     } else {
-                                                        "Verification link pending. Complete verification to enable password reset."
+                                                        ptr("Verification link pending. Complete verification to enable password reset.", "ధృవీకరణ పెండింగ్‌లో ఉంది. పాస్‌వర్డ్ రీసెట్ కోసం ధృవీకరించండి.", "सत्यापन बाकी है। पासवर्ड रीसेट के लिए सत्यापन पूरा करें।")
                                                     },
                                                     style = MaterialTheme.typography.bodySmall,
                                                     color = Color.Gray
                                                 )
                                             } else {
                                                 Text(
-                                                    text = "No verified email configured. Password recovery via email is disabled.",
+                                                    text = ptr("No verified email configured. Password recovery via email is disabled.", "ధృవీకరించిన ఈమెయిల్ లేదు. ఈమెయిల్ ద్వారా పాస్‌వర్డ్ రికవరీ సాధ్యం కాదు.", "कोई सत्यापित ईमेल नहीं है। ईमेल से पासवर्ड रिकवरी बंद है।"),
                                                     style = MaterialTheme.typography.bodySmall,
                                                     color = Color.Gray
                                                 )
@@ -429,7 +444,7 @@ fun PriestAppRoot() {
                                                 modifier = Modifier.fillMaxWidth(),
                                                 shape = RoundedCornerShape(10.dp)
                                             ) {
-                                                Text(if (currentEmail.isNotBlank()) "Update Recovery Email" else "Add Recovery Email")
+                                                Text(if (currentEmail.isNotBlank()) ptr("Update Recovery Email", "రికవరీ ఈమెయిల్ మార్చండి", "रिकवरी ईमेल बदलें") else ptr("Add Recovery Email", "రికవరీ ఈమెయిల్ జోడించండి", "रिकवरी ईमेल जोड़ें"))
                                             }
                                         }
                                     }
@@ -437,11 +452,11 @@ fun PriestAppRoot() {
                                     if (showEmailDialog) {
                                         AlertDialog(
                                             onDismissRequest = { if (!emailLoading) showEmailDialog = false },
-                                            title = { Text("Set Priest Recovery Email") },
+                                            title = { Text(ptr("Set Priest Recovery Email", "రికవరీ ఈమెయిల్ సెట్ చేయండి", "रिकवरी ईमेल सेट करें")) },
                                             text = {
                                                 Column {
                                                     Text(
-                                                        "Enter your email address to receive a secure single-use verification link. Your existing recovery email is preserved until the replacement is verified.",
+                                                        ptr("Enter your email address to receive a secure single-use verification link. Your existing recovery email is preserved until the replacement is verified.", "ధృవీకరణ లింక్ కోసం మీ ఈమెయిల్ నమోదు చేయండి. కొత్తది ధృవీకరించే వరకు ప్రస్తుత ఈమెయిల్ కొనసాగుతుంది.", "सत्यापन लिंक के लिए अपना ईमेल दर्ज करें। नया ईमेल सत्यापित होने तक मौजूदा ईमेल बना रहेगा।"),
                                                         style = MaterialTheme.typography.bodySmall,
                                                         color = Color.Gray
                                                     )
@@ -449,7 +464,7 @@ fun PriestAppRoot() {
                                                     OutlinedTextField(
                                                         value = emailInput,
                                                         onValueChange = { emailInput = it },
-                                                        label = { Text("Email Address") },
+                                                        label = { Text(ptr("Email Address", "ఈమెయిల్ చిరునామా", "ईमेल पता")) },
                                                         singleLine = true,
                                                         modifier = Modifier.fillMaxWidth(),
                                                         enabled = !emailLoading
@@ -478,11 +493,11 @@ fun PriestAppRoot() {
                                                                 emailLoading = false
                                                                 res.fold(
                                                                     onSuccess = {
-                                                                        emailMessage = "Verification link sent! Please check your inbox and click the single-use link to confirm."
+                                                                        emailMessage = ptr("Verification link sent! Please check your inbox and click the single-use link to confirm.", "ధృవీకరణ లింక్ పంపాము. మీ ఇన్‌బాక్స్ చూసి లింక్ నొక్కండి.", "सत्यापन लिंक भेजा गया। इनबॉक्स देखकर लिंक पर क्लिक करें।")
                                                                         reloadPriestProfile()
                                                                     },
                                                                     onFailure = { ex ->
-                                                                        emailError = ex.message ?: "Failed to dispatch verification email."
+                                                                        emailError = ex.message ?: ptr("Failed to dispatch verification email.", "ధృవీకరణ ఈమెయిల్ పంపలేకపోయాము.", "सत्यापन ईमेल नहीं भेजा जा सका।")
                                                                     }
                                                                 )
                                                             }
@@ -493,7 +508,7 @@ fun PriestAppRoot() {
                                                     if (emailLoading) {
                                                         CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
                                                     } else {
-                                                        Text("Send Link")
+                                                        Text(ptr("Send Link", "లింక్ పంపండి", "लिंक भेजें"))
                                                     }
                                                 }
                                             },
@@ -502,7 +517,7 @@ fun PriestAppRoot() {
                                                     onClick = { showEmailDialog = false },
                                                     enabled = !emailLoading
                                                 ) {
-                                                    Text("Close")
+                                                    Text(ptr("Close", "మూసివేయి", "बंद करें"))
                                                 }
                                             }
                                         )
@@ -513,7 +528,7 @@ fun PriestAppRoot() {
                                         onClick = { showReferralModal = true },
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
-                                        Text("🤝 Delegate Booking (Colleague Referral)")
+                                        Text(ptr("🤝 Delegate Booking (Colleague Referral)", "🤝 బుకింగ్ సహచరుడికి అప్పగించండి", "🤝 बुकिंग सहकर्मी को सौंपें"))
                                     }
                                     Spacer(modifier = Modifier.height(10.dp))
                                     OutlinedButton(
@@ -553,6 +568,8 @@ fun PriestAppRoot() {
                         devoteeNakshatram = activeDevoteeNakshatram,
                         devoteeRashi = activeDevoteeRashi,
                         sankalpamPurpose = activeSankalpamPurpose,
+                        expiresAt = activeRequestExpiresAt,
+                        onExpired = { hasSimulatedIncomingAlert = false; activeBookingId = "" },
                         currentLanguage = currentLanguage,
                         strings = strings,
                         errorMessage = incomingError,
@@ -569,6 +586,8 @@ fun PriestAppRoot() {
                                     hasSimulatedIncomingAlert = false
                                     hasActiveBooking = true
                                     activeBookingStatus = "ACCEPTED"
+                                    // The active booking card lives on Duty Radar; take the priest there.
+                                    currentScreen = PriestScreen.DUTY_RADAR
                                 }.onFailure { err ->
                                     incomingError = if (err.message.orEmpty().contains("priest_busy")) strings.event.priestBusyError
                                     else if (err.message.orEmpty().contains("request_expired")) strings.event.priestDeclined
@@ -582,9 +601,11 @@ fun PriestAppRoot() {
                             }
                         },
                         onReject = {
+                            // Capture the ID first: activeBookingId is cleared below before the request runs.
+                            val declinedId = activeBookingId
                             coroutineScope.launch {
                                 PurohitApiClient.updateBookingStatus(
-                                    bookingId = activeBookingId,
+                                    bookingId = declinedId,
                                     status = "CANCELLED",
                                     priestId = priestId
                                 )

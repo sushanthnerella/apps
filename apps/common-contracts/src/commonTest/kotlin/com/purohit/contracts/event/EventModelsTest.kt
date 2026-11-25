@@ -20,6 +20,16 @@ class EventModelsTest {
     ).event!!
 
     @Test
+    fun scheduledEventsAllowPriestApplicationsOnly() {
+        assertTrue(config("SCHEDULED", true).isOpenForPriests)
+        assertFalse(config("SCHEDULED", true).isLive)
+        assertFalse(config("SCHEDULED", true).acceptsBookings)
+        listOf("DRAFT", "ENDED", "ARCHIVED", "UNKNOWN").forEach {
+            assertFalse(config(it, false).isOpenForPriests)
+        }
+    }
+
+    @Test
     fun nullEventMeansNoEventMode() {
         assertNull(json.decodeFromString<EventConfigResponse>("""{"event":null}""").event)
     }

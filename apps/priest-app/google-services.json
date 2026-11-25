@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "905111566135",
+    "project_id": "puja-vaahini",
+    "storage_bucket": "puja-vaahini.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:905111566135:android:b07e1a50ebedb9eab6ccb2",
+        "android_client_info": {
+          "package_name": "com.purohit.devotee"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBiVi9a3W9B7zsKr4LigKUoaP1x1_lA0JE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:905111566135:android:f2f03b908cd8ddfcb6ccb2",
+        "android_client_info": {
+          "package_name": "com.purohit.priest"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBiVi9a3W9B7zsKr4LigKUoaP1x1_lA0JE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

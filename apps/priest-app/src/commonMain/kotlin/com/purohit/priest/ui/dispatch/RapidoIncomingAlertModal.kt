@@ -44,11 +44,20 @@ fun RapidoIncomingAlertModal(
     errorMessage: String? = null,
     isSubmitting: Boolean = false,
     onAccept: () -> Unit,
-    onReject: () -> Unit
+    onReject: () -> Unit,
+    // Server deadline (ISO-8601) for event requests. When set, the countdown follows it and,
+    // at zero, the alert just closes: the server expires the request, nothing is declined.
+    expiresAt: String? = null,
+    onExpired: () -> Unit = onReject
 ) {
-    var timeLeftSeconds by remember { mutableStateOf(45) }
+    val deadline = remember(expiresAt) { expiresAt?.let { runCatching { kotlinx.datetime.Instant.parse(it) }.getOrNull() } }
+    fun secondsToDeadline() = deadline?.let { (it - kotlinx.datetime.Clock.System.now()).inWholeSeconds.toInt().coerceAtLeast(0) }
+    var timeLeftSeconds by remember { mutableStateOf(secondsToDeadline() ?: 45) }
     val isTelugu = currentLanguage == AppLanguage.TELUGU
     val isHindi = currentLanguage == AppLanguage.HINDI
+    // Decline needs a second tap so a slip next to Accept does not drop the request.
+    var declineArmed by remember { mutableStateOf(false) }
+    LaunchedEffect(declineArmed) { if (declineArmed) { kotlinx.coroutines.delay(4_000); declineArmed = false } }
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
 
@@ -59,9 +68,9 @@ fun RapidoIncomingAlertModal(
     LaunchedEffect(Unit) {
         while (timeLeftSeconds > 0) {
             delay(1000L)
-            timeLeftSeconds--
+            timeLeftSeconds = secondsToDeadline() ?: (timeLeftSeconds - 1)
         }
-        onReject()
+        if (deadline != null) onExpired() else onReject()
     }
 
     Box(
@@ -88,7 +97,7 @@ fun RapidoIncomingAlertModal(
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Text(
-                            text = "${timeLeftSeconds}s",
+                            text = if (timeLeftSeconds >= 60) "${timeLeftSeconds / 60}:${(timeLeftSeconds % 60).toString().padStart(2, '0')}" else "${timeLeftSeconds}s",
                             color = Color.White,
                             fontWeight = FontWeight.Bold,
                             style = MaterialTheme.typography.titleLarge
@@ -233,12 +242,12 @@ fun RapidoIncomingAlertModal(
                     horizontalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     OutlinedButton(
-                        onClick = onReject,
+                        onClick = { if (declineArmed) onReject() else declineArmed = true },
                         enabled = !isSubmitting,
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Red)
                     ) {
-                        Text(strings.dispatch.declineDutyCTA)
+                        Text(if (declineArmed) (if (isTelugu) "నిర్ధారించడానికి మళ్లీ నొక్కండి" else if (isHindi) "पुष्टि के लिए फिर दबाएं" else "Tap again to decline") else strings.dispatch.declineDutyCTA)
                     }
                     Button(
                         onClick = onAccept,

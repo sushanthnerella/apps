@@ -143,7 +143,8 @@ data class BookingDetailPayload(
     val devotee_rashi: String = "Vrishabha",
     val sankalpam_purpose: String = "Family Prosperity & Health",
     val chat_room_id: String = "",
-    val created_at: String = ""
+    val created_at: String = "",
+    val request_expires_at: String? = null
 )
 
 @Serializable
@@ -278,10 +279,12 @@ object PurohitApiClient {
         authToken = vault.getToken().orEmpty()
     }
 
+    var onAuthenticated: (() -> Unit)? = null
     var authToken: String = ""
         set(value) {
             if (value.isBlank()) sessionVault?.clear() else sessionVault?.saveToken(value)
             field = value
+            if (value.isNotBlank()) onAuthenticated?.invoke()
         }
 
     var currentPriestProfile: PriestProfilePayload? = null
@@ -533,7 +536,7 @@ object PurohitApiClient {
                 if (response.status.value in 200..299) {
                     return Result.success(parseResponse(response))
                 }
-                if (response.status.value == 409 && attempts < 3) {
+                if (response.status.value == 409 && response.headers["Retry-After"] != null && attempts < 3) {
                     val retryAfter = response.headers["Retry-After"]?.toLongOrNull() ?: 1L
                     delay(retryAfter.coerceAtLeast(1L) * 1000L)
                     continue
@@ -584,7 +587,7 @@ object PurohitApiClient {
     // ----- Event (Pushkaralu) -----
 
     suspend fun fetchEventConfig(): Result<EventConfig?> =
-        eventCall<EventConfigResponse> { it.get("$baseUrl/api/v1/events/config") }.map { it.event }
+        eventCall<EventConfigResponse> { it.get("$baseUrl/api/v1/priests/events/config") { header("Authorization", "Bearer $authToken") } }.map { it.event }
 
     suspend fun fetchParticipation(eventId: String): Result<Participation> = eventCall {
         it.get("$baseUrl/api/v1/events/$eventId/participation/me") { header("Authorization", "Bearer $authToken") }
@@ -818,9 +821,28 @@ object PurohitApiClient {
                 setBody(CreatePriestSlotPayload(priestId, slotDate, startTime, endTime))
             }
             if (response.status.value in 200..299) Result.success(response.bodyAsText())
-            else Result.failure(Exception("Failed to create slot (HTTP ${response.status.value})"))
+            else Result.failure(SlotApiException(slotErrorCode(response), response.status.value))
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
+
+    suspend fun deletePriestSlot(slotId: String): Result<Unit> {
+        val client = httpClient ?: return Result.failure(Exception("HTTP client engine unavailable"))
+        return try {
+            val response = client.delete("$baseUrl/api/v1/priests/slots/$slotId") {
+                header("Authorization", "Bearer $authToken")
+            }
+            if (response.status.value in 200..299) Result.success(Unit)
+            else Result.failure(SlotApiException(slotErrorCode(response), response.status.value))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private suspend fun slotErrorCode(response: HttpResponse): String =
+        runCatching { Regex("\"code\"\\s*:\\s*\"([A-Z_]+)\"").find(response.bodyAsText())?.groupValues?.get(1) }.getOrNull() ?: ""
 }
+
+/** Server rejected a slot operation; [code] is e.g. SLOT_OVERLAP, SLOT_IN_PAST, SLOT_NOT_REMOVABLE. */
+class SlotApiException(val code: String, val httpStatus: Int) : Exception("Slot request failed ($code, HTTP $httpStatus)")

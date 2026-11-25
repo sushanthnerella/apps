@@ -31,8 +31,7 @@ func (s *Storage) GetPriestSlots(priestID, date string) ([]models.PriestSlot, er
 	}
 	defer rows.Close()
 
-	var slots []models.PriestSlot
-	ctx := context.Background()
+	slots := []models.PriestSlot{}
 
 	for rows.Next() {
 		var slot models.PriestSlot
@@ -47,22 +46,7 @@ func (s *Storage) GetPriestSlots(priestID, date string) ([]models.PriestSlot, er
 		slot.EndTime = et.Format("15:04")
 		slot.BookedBookingID = bookedID
 
-		// Check if held in Redis
-		if s.Redis != nil {
-			lockKey := fmt.Sprintf("lock:slot:%s", slot.ID)
-			val, _ := s.Redis.Get(ctx, lockKey).Result()
-			if val != "" {
-				slot.IsHeld = true
-			}
-		} else {
-			lockKey := fmt.Sprintf("lock:slot:%s", slot.ID)
-			now := time.Now().Unix()
-			if val, ok := inMemorySlotLocks.Load(lockKey); ok {
-				if holdInfo, ok := val.(slotHoldInfo); ok && holdInfo.expiresAt > now {
-					slot.IsHeld = true
-				}
-			}
-		}
+		slot.IsHeld = s.isSlotHeld(slot.ID)
 
 		slots = append(slots, slot)
 	}
@@ -70,20 +54,84 @@ func (s *Storage) GetPriestSlots(priestID, date string) ([]models.PriestSlot, er
 	return slots, nil
 }
 
-// CreatePriestSlot inserts a new availability slot, preserving existing booked state on conflict
+var (
+	// ErrSlotInvalid means the slot times are malformed or end is not after start.
+	ErrSlotInvalid = errors.New("slot end time must be after start time")
+	// ErrSlotOverlap means the priest already published a slot overlapping this one.
+	ErrSlotOverlap = errors.New("slot overlaps an existing slot")
+	// ErrSlotNotRemovable means the slot is booked or held and cannot be removed.
+	ErrSlotNotRemovable = errors.New("slot is booked or held and cannot be removed")
+	// ErrSlotNotFound means no slot with that id belongs to the priest.
+	ErrSlotNotFound = errors.New("slot not found")
+)
+
+// CreatePriestSlot inserts a new availability slot. Overlapping slots for the same
+// priest and date are rejected with ErrSlotOverlap.
 func (s *Storage) CreatePriestSlot(req models.CreateSlotRequest) (string, error) {
-	query := `
-		INSERT INTO priest_availability_slots (priest_id, slot_date, start_time, end_time) 
-		VALUES ($1, $2, $3, $4) 
-		ON CONFLICT ON CONSTRAINT uq_priest_slot DO UPDATE SET is_booked = priest_availability_slots.is_booked
-		RETURNING id
-	`
-	var id string
-	err := s.DB.QueryRow(query, req.PriestID, req.SlotDate, req.StartTime, req.EndTime).Scan(&id)
+	start, err1 := time.Parse("15:04", req.StartTime)
+	end, err2 := time.Parse("15:04", req.EndTime)
+	if _, err := time.Parse("2006-01-02", req.SlotDate); err != nil || err1 != nil || err2 != nil || !end.After(start) {
+		return "", ErrSlotInvalid
+	}
+	tx, err := s.DB.Begin()
 	if err != nil {
 		return "", fmt.Errorf("failed to create priest slot: %w", err)
 	}
-	return id, nil
+	defer tx.Rollback()
+	// Serialize publishes per priest so two concurrent overlapping inserts cannot both pass the check.
+	if _, err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtext('priest_slots:' || $1))`, req.PriestID); err != nil {
+		return "", fmt.Errorf("failed to lock priest slots: %w", err)
+	}
+	var overlaps bool
+	if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM priest_availability_slots
+		WHERE priest_id = $1 AND slot_date = $2 AND start_time < $4::time AND end_time > $3::time)`,
+		req.PriestID, req.SlotDate, req.StartTime, req.EndTime).Scan(&overlaps); err != nil {
+		return "", fmt.Errorf("failed to check slot overlap: %w", err)
+	}
+	if overlaps {
+		return "", ErrSlotOverlap
+	}
+	var id string
+	if err := tx.QueryRow(`INSERT INTO priest_availability_slots (priest_id, slot_date, start_time, end_time)
+		VALUES ($1, $2, $3, $4) RETURNING id`, req.PriestID, req.SlotDate, req.StartTime, req.EndTime).Scan(&id); err != nil {
+		return "", fmt.Errorf("failed to create priest slot: %w", err)
+	}
+	return id, tx.Commit()
+}
+
+// DeletePriestSlot removes an unbooked, unheld slot owned by the priest.
+func (s *Storage) DeletePriestSlot(priestID, slotID string) error {
+	if s.isSlotHeld(slotID) {
+		return ErrSlotNotRemovable
+	}
+	res, err := s.DB.Exec(`DELETE FROM priest_availability_slots WHERE id = $1::uuid AND priest_id = $2 AND is_booked = false`, slotID, priestID)
+	if err != nil {
+		return fmt.Errorf("failed to delete slot: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		var exists bool
+		_ = s.DB.QueryRow(`SELECT EXISTS (SELECT 1 FROM priest_availability_slots WHERE id = $1::uuid AND priest_id = $2)`, slotID, priestID).Scan(&exists)
+		if exists {
+			return ErrSlotNotRemovable
+		}
+		return ErrSlotNotFound
+	}
+	return nil
+}
+
+func (s *Storage) isSlotHeld(slotID string) bool {
+	lockKey := fmt.Sprintf("lock:slot:%s", slotID)
+	if s.Redis != nil {
+		if val, _ := s.Redis.Get(context.Background(), lockKey).Result(); val != "" {
+			return true
+		}
+	}
+	if val, ok := inMemorySlotLocks.Load(lockKey); ok {
+		if holdInfo, ok := val.(slotHoldInfo); ok && holdInfo.expiresAt > time.Now().Unix() {
+			return true
+		}
+	}
+	return false
 }
 
 // HoldPriestSlot attempts a 10-minute hold lock in Redis for devotee checkout (with in-memory mutex fallback)

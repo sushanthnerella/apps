@@ -593,55 +593,7 @@ func buildGatewayRouter(storage *db.Storage, pushNotifier notify.PushNotifier) *
 	})
 
 	// 12. Priest Availability Slots
-	router.HandleFunc("/api/v1/priests/slots", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.Method == "GET" {
-			priestID := r.URL.Query().Get("priest_id")
-			date := r.URL.Query().Get("date")
-			if date == "" {
-				date = time.Now().Format("2006-01-02")
-			}
-			slots, err := storage.GetPriestSlots(priestID, date)
-			if err != nil {
-				http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
-				return
-			}
-			json.NewEncoder(w).Encode(slots)
-			return
-		}
-
-		if r.Method == "POST" {
-			claims, err := validateCallerSession(r, storage)
-			if err != nil {
-				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
-				return
-			}
-			if claims.Role != "priest" {
-				http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
-				return
-			}
-			var req models.CreateSlotRequest
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, `{"error":"invalid slot payload"}`, http.StatusBadRequest)
-				return
-			}
-			if req.PriestID != claims.UserID {
-				http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
-				return
-			}
-			slotID, err := storage.CreatePriestSlot(req)
-			if err != nil {
-				http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
-				return
-			}
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"status":  "SUCCESS",
-				"slot_id": slotID,
-				"message": "Availability slot published successfully",
-			})
-			return
-		}
-	}).Methods("GET", "POST", "OPTIONS")
+	registerPriestSlotRoutes(router, storage)
 
 	router.HandleFunc("/api/v1/priests/slots/hold", requireRole(storage, "devotee")(requireIdempotency(storage)(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

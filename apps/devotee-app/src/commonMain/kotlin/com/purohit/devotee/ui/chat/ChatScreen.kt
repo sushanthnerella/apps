@@ -244,7 +244,7 @@ fun ChatScreen(
                     OutlinedTextField(
                         value = inputText,
                         onValueChange = { inputText = it },
-                        placeholder = { Text("Type message, gate directions...") },
+                        placeholder = { Text(when (language) { AppLanguage.TELUGU -> "సందేశం టైప్ చేయండి..."; AppLanguage.HINDI -> "संदेश लिखें..."; else -> "Type a message..." }) },
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(24.dp),
                         singleLine = true

@@ -16,7 +16,7 @@ class ScheduleOperationTest {
             publish = { Result.success(Unit) },
             refresh = { refreshStarted.complete(Unit); refreshGate.await() },
             setLoading = { loading = it },
-            onFailure = { error("Unexpected failure") }
+            onFailure = { error("Unexpected failure: $it") }
         )
         refreshStarted.await()
         try { assertTrue(loading, "The controls must remain disabled while refresh is in progress") }

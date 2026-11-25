@@ -26,7 +26,7 @@ class DutyLocationService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var locationManager: LocationManager? = null
     private var locationListener: LocationListener? = null
-    private var lastLocation: Location? = null
+    @Volatile private var lastLocation: Location? = null
     private var updateJob: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -35,13 +35,25 @@ class DutyLocationService : Service() {
         super.onCreate()
         createNotificationChannel()
         val notification = buildForegroundNotification()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            // Android refuses a location foreground service started from the background
+            // (e.g. a system restart after the app was killed). Stop quietly; the app
+            // restarts the service next time it is opened while on duty.
+            stopSelf()
+            return
         }
         startLocationTracking()
     }
+
+    // Never let the system restart the service from the background: that restart is
+    // what Android blocks for location services and it crashed the app in a loop.
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_NOT_STICKY
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -87,20 +99,16 @@ class DutyLocationService : Service() {
         }
 
         try {
-            if (locationManager?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true) {
-                locationManager?.requestLocationUpdates(
-                    LocationManager.GPS_PROVIDER,
-                    10000L,
-                    10f,
-                    locationListener!!
-                )
-            } else if (locationManager?.isProviderEnabled(LocationManager.NETWORK_PROVIDER) == true) {
-                locationManager?.requestLocationUpdates(
-                    LocationManager.NETWORK_PROVIDER,
-                    10000L,
-                    10f,
-                    locationListener!!
-                )
+            // Request both providers, including updates while stationary. Discovery expires
+            // after 15 minutes even if the priest has not moved.
+            for (provider in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
+                if (locationManager?.isProviderEnabled(provider) == true) {
+                    try {
+                        locationManager?.requestLocationUpdates(provider, 60_000L, 0f, locationListener!!)
+                    } catch (_: SecurityException) {
+                        // Coarse-only permission may allow network but not GPS.
+                    }
+                }
             }
         } catch (_: SecurityException) {
             // Permission verified prior to service start
@@ -116,7 +124,7 @@ class DutyLocationService : Service() {
                     null
                 }
 
-                if (loc != null) {
+                if (loc != null && System.currentTimeMillis() - loc.time in 0..300_000L) {
                     val capturedAt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                         Instant.ofEpochMilli(loc.time).toString()
                     } else {
@@ -126,17 +134,34 @@ class DutyLocationService : Service() {
                     }
                     val accuracyM = loc.accuracy.toDouble()
 
-                    PurohitApiClient.updateLocation(
+                    val result = PurohitApiClient.updateLocation(
                         latitude = loc.latitude,
                         longitude = loc.longitude,
                         capturedAt = capturedAt,
                         accuracyM = accuracyM
                     )
+                    updateLocationNotification(result.isSuccess)
+                } else {
+                    updateLocationNotification(false)
                 }
 
                 delay(120_000L) // 120 seconds
             }
         }
+    }
+
+    private fun updateLocationNotification(sharing: Boolean) {
+        val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, CHANNEL_ID)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+        }.setContentTitle(if (sharing) "On duty – sharing location" else "Location needs updating")
+            .setContentText(if (sharing) "Your location is being shared for bookings." else "Open the app and update your location so devotees can find you.")
+            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setOngoing(true)
+            .build()
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(NOTIFICATION_ID, notification)
     }
 
     override fun onDestroy() {

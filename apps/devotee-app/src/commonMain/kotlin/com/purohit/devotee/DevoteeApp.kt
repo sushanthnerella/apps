@@ -114,11 +114,26 @@ fun DevoteeAppRoot() {
 
     LaunchedEffect(Unit) {
         EventConfigStore.refreshIfStale()
-        if (PurohitApiClient.authToken.isNotBlank()) {
-            PurohitApiClient.fetchProfile().onSuccess {
+        // A blip (slow network, server busy) must not log the devotee out: retry while the
+        // token is still held. fetchProfile clears the token only on a real 401.
+        var attempt = 0
+        while (PurohitApiClient.authToken.isNotBlank() && !isAuthenticated) {
+            val result = PurohitApiClient.fetchProfile()
+            if (result.isSuccess) {
                 isAuthenticated = true
                 currentScreen = DevoteeScreen.SERVICES
-            }.onFailure { restorationError = it.message }
+            } else if (PurohitApiClient.authToken.isNotBlank() && ++attempt < 4) {
+                kotlinx.coroutines.delay(2000L * attempt)
+            } else {
+                // Token cleared means the session really ended: just show login, no error popup.
+                // Token kept means the server could not be reached.
+                if (PurohitApiClient.authToken.isNotBlank()) restorationError = when (currentLanguage) {
+                    AppLanguage.TELUGU -> "Puja Vaahini సర్వర్‌ను చేరలేకపోయాము. ఇంటర్నెట్ తనిఖీ చేసి యాప్‌ను మళ్లీ తెరవండి."
+                    AppLanguage.HINDI -> "Puja Vaahini सर्वर तक नहीं पहुँच सके। इंटरनेट जाँचकर ऐप फिर खोलें।"
+                    else -> "Could not reach Puja Vaahini. Check your internet and reopen the app."
+                }
+                break
+            }
         }
     }
 
@@ -177,36 +192,36 @@ fun DevoteeAppRoot() {
                             NavigationBarItem(
                                 selected = currentScreen == DevoteeScreen.SERVICES,
                                 onClick = { currentScreen = DevoteeScreen.SERVICES },
-                                label = { Text(strings.common.tabServices) },
+                                label = { Text(strings.common.tabServices, style = MaterialTheme.typography.labelSmall, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center) },
                                 icon = { Text("🪔") }
                             )
                             NavigationBarItem(
                                 selected = currentScreen == DevoteeScreen.TEMPLES,
                                 onClick = { currentScreen = DevoteeScreen.TEMPLES },
-                                label = { Text(strings.common.tabTemples) },
+                                label = { Text(strings.common.tabTemples, style = MaterialTheme.typography.labelSmall, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center) },
                                 icon = { Text("🏛️") }
                             )
                             if (eventLive || inEventFlow) NavigationBarItem(
                                 selected = inEventFlow,
                                 onClick = { currentScreen = DevoteeScreen.PUSHKARALU },
-                                label = { Text(strings.event.tabEvent) },
+                                label = { Text(strings.event.tabEvent, style = MaterialTheme.typography.labelSmall, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center) },
                                 icon = { Text("🌊") }
                             ) else NavigationBarItem(
                                 selected = currentScreen == DevoteeScreen.PUJA_STORE,
                                 onClick = { currentScreen = DevoteeScreen.PUJA_STORE },
-                                label = { Text(strings.common.tabPujaStore) },
+                                label = { Text(strings.common.tabPujaStore, style = MaterialTheme.typography.labelSmall, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center) },
                                 icon = { Text("🛒") }
                             )
                             NavigationBarItem(
                                 selected = currentScreen == DevoteeScreen.BOOKING_HISTORY || currentScreen == DevoteeScreen.BOOKINGS_RADAR || currentScreen == DevoteeScreen.LIVE_TRACKING,
                                 onClick = { currentScreen = DevoteeScreen.BOOKING_HISTORY },
-                                label = { Text(strings.common.tabBookings) },
+                                label = { Text(strings.common.tabBookings, style = MaterialTheme.typography.labelSmall, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center) },
                                 icon = { Text(if (currentScreen == DevoteeScreen.LIVE_TRACKING) "🛵" else "📍") }
                             )
                             NavigationBarItem(
                                 selected = currentScreen == DevoteeScreen.PROFILE,
                                 onClick = { currentScreen = DevoteeScreen.PROFILE },
-                                label = { Text(strings.common.tabProfile) },
+                                label = { Text(strings.common.tabProfile, style = MaterialTheme.typography.labelSmall, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center) },
                                 icon = { Text("👤") }
                             )
                         }
@@ -403,7 +418,7 @@ fun DevoteeAppRoot() {
                     }
                 }
 
-                restorationError?.let { error -> AlertDialog(onDismissRequest = { restorationError = null }, title = { Text("Unable to load booking") }, text = { Text(error) }, confirmButton = { TextButton(onClick = { restorationError = null }) { Text("OK") } }) }
+                restorationError?.let { error -> AlertDialog(onDismissRequest = { restorationError = null }, title = { Text(when (currentLanguage) { AppLanguage.TELUGU -> "సమస్య ఎదురైంది"; AppLanguage.HINDI -> "समस्या हुई"; else -> "Something went wrong" }) }, text = { Text(error) }, confirmButton = { TextButton(onClick = { restorationError = null }) { Text("OK") } }) }
 
                 // 1. Language Switcher Radio Modal
                 if (showAppearance) {

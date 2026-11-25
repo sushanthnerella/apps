@@ -1,4 +1,5 @@
 plugins {
+    id("com.google.gms.google-services")
     alias(libs.plugins.kotlinMultiplatform)
     alias(libs.plugins.androidApplication)
     alias(libs.plugins.jetbrainsCompose)
@@ -48,6 +49,8 @@ kotlin {
             implementation(libs.androidx.activity.compose)
             implementation(libs.ktor.client.okhttp)
             implementation("com.google.firebase:firebase-messaging:23.4.1")
+            // Firebase pulls androidx.fragment 1.0.0 transitively; <1.3.0 breaks registerForActivityResult (lint: InvalidFragmentVersionForActivityResult).
+            implementation("androidx.fragment:fragment:1.6.2")
         }
         iosMain.dependencies {
             implementation(libs.ktor.client.darwin)

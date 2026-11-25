@@ -48,6 +48,7 @@ fun DutyToggleScreen(
     var dutyLoaded by remember { mutableStateOf(false) }
     var dutyBusy by remember { mutableStateOf(false) }
     var dutyError by remember { mutableStateOf<String?>(null) }
+    var dutyNotice by remember { mutableStateOf<String?>(null) }
     var bookingStatus by remember(initialBookingStatus) { mutableStateOf(if (initialBookingStatus.isNotEmpty()) initialBookingStatus else "IN_TRANSIT") } // IN_TRANSIT, ARRIVED, POOJA_STARTED, COMPLETED
     var showOtpDialog by remember { mutableStateOf(false) }
     var enteredOtp by remember { mutableStateOf("") }
@@ -55,6 +56,7 @@ fun DutyToggleScreen(
     var codeForStart by remember { mutableStateOf(false) }
     var verifiedStartCode by remember(activeBookingId) { mutableStateOf("") }
     var statusMessage by remember { mutableStateOf<String?>(null) }
+    var statusIsError by remember { mutableStateOf(false) }
     var isUpdatingStatus by remember { mutableStateOf(false) }
 
     val coroutineScope = rememberCoroutineScope()
@@ -63,16 +65,10 @@ fun DutyToggleScreen(
     val isHindi = currentLanguage == AppLanguage.HINDI
     fun tr(en: String, te: String, hi: String) = when (currentLanguage) { AppLanguage.TELUGU -> te; AppLanguage.HINDI -> hi; else -> en }
 
-    LaunchedEffect(priestId) {
-        dutyBusy = true
-        PurohitApiClient.getDutyStatus().onSuccess { isOnline = it.is_online; locationConfirmed = it.location_confirmed; dutyLoaded = true; dutyError = null }
-            .onFailure { dutyError = tr("Could not load availability. Reopen to retry.", "అందుబాటు పొందలేకపోయాము. మళ్లీ తెరవండి.", "उपलब्धता नहीं मिली। फिर से खोलें।") }
-        dutyBusy = false
-    }
-
     fun updateLocation(goOnline: Boolean) {
         dutyBusy = true
         dutyError = null
+        dutyNotice = null
         locationAccess.request { result ->
             result.onSuccess { location ->
                 coroutineScope.launch {
@@ -86,7 +82,9 @@ fun DutyToggleScreen(
                     }
                     saved.onSuccess {
                         locationConfirmed = true
-                        if (goOnline) { isOnline = true; DutyServiceController.start() }
+                        if (goOnline) isOnline = true
+                        DutyServiceController.start()
+                        dutyNotice = tr("Location updated. Devotees nearby can find you.", "స్థానం నవీకరించబడింది. సమీప భక్తులు మిమ్మల్ని కనుగొనగలరు.", "स्थान अपडेट हो गया। आसपास के भक्त आपको ढूँढ सकते हैं।")
                     }.onFailure {
                         locationConfirmed = false
                         PurohitApiClient.getDutyStatus().onSuccess { status -> isOnline = status.is_online; locationConfirmed = status.location_confirmed }
@@ -95,15 +93,42 @@ fun DutyToggleScreen(
                     dutyBusy = false
                 }
             }.onFailure {
-                dutyError = it.message ?: "Could not get your location. Please try again."
+                locationConfirmed = false
+                dutyError = tr("Your location could not be refreshed. Devotees may not be able to find you; update your location.", "మీ స్థానం నవీకరించలేదు. భక్తులు మిమ్మల్ని కనుగొనలేకపోవచ్చు; మీ స్థానాన్ని నవీకరించండి.", "आपका स्थान अपडेट नहीं हुआ। भक्त आपको खोज नहीं पाएंगे; अपना स्थान अपडेट करें।")
                 dutyBusy = false
             }
         }
     }
 
+    LaunchedEffect(priestId) {
+        dutyBusy = true
+        PurohitApiClient.getDutyStatus().onSuccess {
+            isOnline = it.is_online
+            locationConfirmed = it.location_confirmed
+            dutyLoaded = true
+            dutyError = null
+        }.onFailure {
+            dutyError = tr("Could not load availability. Reopen to retry.", "అందుబాటు పొందలేకపోయాము. మళ్లీ తెరవండి.", "उपलब्धता नहीं मिली। फिर से खोलें।")
+        }
+        dutyBusy = false
+        // An online session may outlive the Android service. Refresh its fix and restart sharing.
+        if (dutyLoaded && isOnline) updateLocation(false)
+    }
+
+    fun nextHiddenStep(current: String) = when (current) { "ACCEPTED" -> "IN_TRANSIT"; "IN_TRANSIT" -> "ARRIVED"; else -> "" }
+
     fun updateStatus(newStatus: String, otp: String? = null) {
         isUpdatingStatus = true
         coroutineScope.launch {
+            // Ghat bookings have no travel: the server still walks ACCEPTED → IN_TRANSIT → ARRIVED,
+            // so step through the skipped states before starting.
+            if (requiresCodeToStart && newStatus == "POOJA_STARTED") {
+                for (step in listOf("IN_TRANSIT", "ARRIVED").dropWhile { it != nextHiddenStep(bookingStatus) }) {
+                    val hop = PurohitApiClient.updateBookingStatus(bookingId = activeBookingId, status = step, priestId = priestId, otp = null)
+                    if (hop.isFailure) break
+                    bookingStatus = step
+                }
+            }
             val res = PurohitApiClient.updateBookingStatus(
                 bookingId = activeBookingId,
                 status = newStatus,
@@ -114,12 +139,18 @@ fun DutyToggleScreen(
             res.onFailure { if (newStatus == "POOJA_STARTED") verifiedStartCode = "" }
             res.onSuccess {
                 bookingStatus = newStatus
+                statusIsError = false
                 statusMessage = tr("Booking status updated.", "బుకింగ్ స్థితి నవీకరించబడింది.", "बुकिंग की स्थिति अपडेट हुई।")
                 if (newStatus == "COMPLETED") {
                     onBookingCompleted()
                 }
-            }.onFailure {
-                statusMessage = tr("Could not update status. Please try again.", "స్థితి నవీకరించలేదు. మళ్లీ ప్రయత్నించండి.", "स्थिति अपडेट नहीं हुई। फिर प्रयास करें।")
+            }.onFailure { error ->
+                statusIsError = true
+                statusMessage = if (otp != null && error.message.orEmpty().let { it.contains("INVALID_OTP") || it.contains("invalid completion OTP", ignoreCase = true) }) {
+                    tr("Incorrect code. Check the devotee's code and try again.", "కోడ్ తప్పు. భక్తుని కోడ్ తనిఖీ చేసి మళ్లీ ప్రయత్నించండి.", "कोड गलत है। भक्त का कोड जाँचकर फिर प्रयास करें।")
+                } else {
+                    tr("Could not update status. Please try again.", "స్థితి నవీకరించలేదు. మళ్లీ ప్రయత్నించండి.", "स्थिति अपडेट नहीं हुई। फिर प्रयास करें।")
+                }
             }
         }
     }
@@ -149,6 +180,7 @@ fun DutyToggleScreen(
                 Text(tr("Your location and online status help devotees find you. Update your location when you move.", "భక్తులు మిమ్మల్ని కనుగొనడానికి మీ స్థానం, ఆన్‌లైన్ స్థితి సహాయపడతాయి. స్థానం మారితే నవీకరించండి.", "आपका स्थान और ऑनलाइन स्थिति भक्तों को आपको खोजने में मदद करती है। स्थान बदलने पर अपडेट करें।"), style = MaterialTheme.typography.bodySmall)
                 OutlinedButton(onClick = { updateLocation(false) }, enabled = dutyLoaded && !dutyBusy && isOnline) { Text(tr("Update my location", "నా స్థానం నవీకరించండి", "मेरा स्थान अपडेट करें")) }
                 dutyError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                if (dutyError == null) dutyNotice?.let { Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall) }
             }
         }
         Spacer(modifier = Modifier.height(14.dp))
@@ -287,41 +319,46 @@ fun DutyToggleScreen(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Button(
-                            onClick = { updateStatus("IN_TRANSIT") },
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                            shape = RoundedCornerShape(8.dp),
-                            enabled = !isUpdatingStatus && bookingStatus != "IN_TRANSIT" && bookingStatus != "COMPLETED"
-                        ) {
-                            Text(if (isTelugu) "1. ప్రయాణం" else if (isHindi) "1. प्रस्थान" else "1. In Transit", style = MaterialTheme.typography.labelSmall)
-                        }
+                        // Only the next step is tappable; ghat bookings skip travel and arrival.
+                        if (!requiresCodeToStart) {
+                            Button(
+                                onClick = { updateStatus("IN_TRANSIT") },
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                enabled = !isUpdatingStatus && bookingStatus == "ACCEPTED"
+                            ) {
+                                Text(if (isTelugu) "1. ప్రయాణం" else if (isHindi) "1. प्रस्थान" else "1. In Transit", style = MaterialTheme.typography.labelSmall)
+                            }
 
-                        Button(
-                            onClick = { updateStatus("ARRIVED") },
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                            shape = RoundedCornerShape(8.dp),
-                            enabled = !isUpdatingStatus && bookingStatus == "IN_TRANSIT"
-                        ) {
-                            Text(if (isTelugu) "2. చేరిక" else if (isHindi) "2. आगमन" else "2. Arrived", style = MaterialTheme.typography.labelSmall)
+                            Button(
+                                onClick = { updateStatus("ARRIVED") },
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                enabled = !isUpdatingStatus && bookingStatus == "IN_TRANSIT"
+                            ) {
+                                Text(if (isTelugu) "2. చేరిక" else if (isHindi) "2. आगमन" else "2. Arrived", style = MaterialTheme.typography.labelSmall)
+                            }
                         }
 
                         Button(
                             onClick = { if (requiresCodeToStart) { codeForStart = true; enteredOtp = ""; showOtpDialog = true } else updateStatus("POOJA_STARTED") },
                             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                             shape = RoundedCornerShape(8.dp),
-                            enabled = !isUpdatingStatus && bookingStatus == "ARRIVED"
+                            enabled = !isUpdatingStatus && (bookingStatus == "ARRIVED" || (requiresCodeToStart && bookingStatus in setOf("ACCEPTED", "IN_TRANSIT")))
                         ) {
-                            Text(if (isTelugu) "3. పూజ మొదలు" else if (isHindi) "3. पूजा प्रारंभ" else "3. Start Puja", style = MaterialTheme.typography.labelSmall)
+                            val n = if (requiresCodeToStart) "1" else "3"
+                            Text(if (isTelugu) "$n. పూజ మొదలు" else if (isHindi) "$n. पूजा प्रारंभ" else "$n. Start Puja", style = MaterialTheme.typography.labelSmall)
                         }
 
                         Button(
-                            onClick = { if (requiresCodeToStart && verifiedStartCode.isNotBlank()) updateStatus("COMPLETED", verifiedStartCode) else { codeForStart = false; showOtpDialog = true } },
+                            onClick = { if (requiresCodeToStart && verifiedStartCode.isNotBlank()) updateStatus("COMPLETED", verifiedStartCode) else { codeForStart = false; enteredOtp = ""; showOtpDialog = true } },
                             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                             shape = RoundedCornerShape(8.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF15803D)),
                             enabled = !isUpdatingStatus && bookingStatus == "POOJA_STARTED"
                         ) {
-                            Text(if (isTelugu) "4. సమాప్తం" else if (isHindi) "4. संपन्न" else "4. Complete", style = MaterialTheme.typography.labelSmall)
+                            val n = if (requiresCodeToStart) "2" else "4"
+                            Text(if (isTelugu) "$n. సమాప్తం" else if (isHindi) "$n. संपन्न" else "$n. Complete", style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 }
@@ -374,7 +411,7 @@ fun DutyToggleScreen(
             Text(
                 text = statusMessage!!,
                 style = MaterialTheme.typography.labelSmall,
-                color = Color(0xFF15803D),
+                color = if (statusIsError) MaterialTheme.colorScheme.error else Color(0xFF15803D),
                 fontWeight = FontWeight.Bold
             )
         }
@@ -390,14 +427,16 @@ fun DutyToggleScreen(
             text = {
                 Column {
                     Text(
-                        text = tr("Ask the devotee for the 4-digit completion code after the pooja.", "పూజ తర్వాత భక్తుడిని 4 అంకెల పూర్తి కోడ్ అడగండి.", "पूजा के बाद भक्त से 4 अंकों का समापन कोड लें।"),
+                        text = if (codeForStart) tr("Ask the devotee for the 4-digit booking code shown in their app before you begin.", "ప్రారంభించే ముందు భక్తుని యాప్‌లో ఉన్న 4 అంకెల బుకింగ్ కోడ్ అడగండి.", "शुरू करने से पहले भक्त के ऐप में दिखा 4 अंकों का बुकिंग कोड लें।")
+                            else tr("Ask the devotee for the 4-digit completion code after the pooja.", "పూజ తర్వాత భక్తుడిని 4 అంకెల పూర్తి కోడ్ అడగండి.", "पूजा के बाद भक्त से 4 अंकों का समापन कोड लें।"),
                         style = MaterialTheme.typography.bodySmall
                     )
                     Spacer(modifier = Modifier.height(10.dp))
                     OutlinedTextField(
                         value = enteredOtp,
-                        onValueChange = { if (it.length <= 6) enteredOtp = it },
+                        onValueChange = { enteredOtp = it.filter { c -> c.isDigit() }.take(4) },
                         label = { Text(tr("4-digit code", "4 అంకెల కోడ్", "4 अंकों का कोड")) },
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.NumberPassword),
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
@@ -406,7 +445,7 @@ fun DutyToggleScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        if (enteredOtp.isNotBlank()) {
+                        if (enteredOtp.length == 4) {
                             showOtpDialog = false
                             if (codeForStart) {
                                 verifiedStartCode = enteredOtp.trim()
@@ -414,9 +453,10 @@ fun DutyToggleScreen(
                             } else updateStatus("COMPLETED", enteredOtp.trim())
                         }
                     },
+                    enabled = enteredOtp.length == 4,
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF15803D))
                 ) {
-                    Text(tr("Verify completion", "పూర్తిని నిర్ధారించండి", "समापन सत्यापित करें"))
+                    Text(if (codeForStart) tr("Verify and start", "నిర్ధారించి ప్రారంభించండి", "सत्यापित करें और शुरू करें") else tr("Verify completion", "పూర్తిని నిర్ధారించండి", "समापन सत्यापित करें"))
                 }
             },
             dismissButton = {
