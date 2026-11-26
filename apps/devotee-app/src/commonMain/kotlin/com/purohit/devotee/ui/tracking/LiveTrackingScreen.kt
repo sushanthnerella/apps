@@ -41,9 +41,15 @@ fun LiveTrackingScreen(
     LaunchedEffect(bookingId) {
         if (bookingId.isBlank()) { error = strings.common.bookingMissing; return@LaunchedEffect }
         var refreshDelay = 5000L
+        var failures = 0
         while (true) {
-            PurohitApiClient.fetchBookingDetails(bookingId).onSuccess { status = it.status; error = null; refreshDelay = 5000L }
-                .onFailure { error = strings.common.bookingRefreshError; refreshDelay = (refreshDelay * 2).coerceAtMost(60000L) }
+            PurohitApiClient.fetchBookingDetails(bookingId).onSuccess { status = it.status; error = null; failures = 0; refreshDelay = 5000L }
+                .onFailure {
+                    // ponytail: one blip (e.g. network waking after background) is not worth an error; retry fast.
+                    failures++
+                    if (failures >= 2) error = strings.common.bookingRefreshError
+                    refreshDelay = if (failures == 1) 2000L else (refreshDelay * 2).coerceAtMost(15000L)
+                }
             if (otp.isBlank()) PurohitApiClient.fetchBookingOtp(bookingId).onSuccess { otp = it.completion_otp; otpError = null }
                 .onFailure { otpError = tr("Could not load the completion code. Check your connection.", "పూర్తి కోడ్ పొందలేకపోయాము. కనెక్షన్ తనిఖీ చేయండి.", "समापन कोड नहीं मिला। कनेक्शन जाँचें।") }
             if (status in listOf("COMPLETED", "CANCELLED", "REJECTED")) break

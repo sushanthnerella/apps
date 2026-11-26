@@ -298,7 +298,7 @@ fun EventBookingScreen(
         while (true) {
             PurohitApiClient.fetchBookingDetails(booking.bookingId)
                 .onSuccess { status = it.status; title = it.pooja_title; scheduledText = listOf(it.scheduled_date, it.slot_time).filter { v -> v.isNotBlank() }.joinToString(" • "); wait = 4_000L }
-                .onFailure { wait = (wait * 2).coerceAtMost(30_000L) }
+                .onFailure { wait = (wait * 2).coerceAtMost(10_000L) }
             if (eventBookingPhase(status, expiresAt, Clock.System.now()) in setOf(EventBookingPhase.COMPLETED, EventBookingPhase.CANCELLED, EventBookingPhase.EXPIRED)) break
             delay(wait)
         }

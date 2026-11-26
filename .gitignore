@@ -51,3 +51,5 @@ backend/vendor/
 /.agents/
 
 .staging-test-devotee.env
+
+hs_err_pid*.log

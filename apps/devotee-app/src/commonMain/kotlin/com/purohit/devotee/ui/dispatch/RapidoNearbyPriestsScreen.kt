@@ -158,7 +158,11 @@ fun RapidoNearbyPriestsScreen(
                         }
                     } else if (details.status == "CANCELLED" || details.status == "REJECTED") {
                         isAwaitingPriestAcceptance = false
-                        errorMessage = tr("The priest declined. Choose another priest or time.", "పురోహితుడు నిరాకరించారు. మరొక పురోహితుడు లేదా సమయం ఎంచుకోండి.", "पुरोहित ने मना किया। दूसरा पुरोहित या समय चुनें।")
+                        errorMessage = if (details.cancellation_reason == "request_expired")
+                            tr("The priest did not respond in time. Nothing is charged. Choose another priest or time.", "పురోహితుడు సమయానికి స్పందించలేదు. ఎలాంటి చార్జీ లేదు. మరొక పురోహితుడు లేదా సమయం ఎంచుకోండి.", "पुरोहित ने समय पर जवाब नहीं दिया। कोई शुल्क नहीं लगा। दूसरा पुरोहित या समय चुनें।")
+                        else tr("The priest declined. Choose another priest or time.", "పురోహితుడు నిరాకరించారు. మరొక పురోహితుడు లేదా సమయం ఎంచుకోండి.", "पुरोहित ने मना किया। दूसरा पुरोहित या समय चुनें।")
+                    } else {
+                        errorMessage = null
                     }
                 }.onFailure {
                     backoff.recordError()

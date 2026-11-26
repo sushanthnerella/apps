@@ -858,7 +858,7 @@ func (s *Storage) GetBookingDetails(bookingID string) (*models.BookingDetailResp
 			COALESCE(b.scheduled_date, ''), COALESCE(b.slot_time, ''),
 			COALESCE(b.devotee_gotram, u.gotram, ''), COALESCE(b.devotee_nakshatram, u.nakshatram, ''),
 			COALESCE(b.devotee_rashi, u.rashi, ''), COALESCE(b.sankalpam_purpose, ''),
-			COALESCE(cr.id::text, ''), b.created_at
+			COALESCE(cr.id::text, ''), b.created_at, COALESCE(b.cancellation_reason, '')
 		FROM bookings b
 		LEFT JOIN users u ON b.user_id = u.id
 		LEFT JOIN priests p ON b.priest_id = p.id
@@ -878,7 +878,7 @@ func (s *Storage) GetBookingDetails(bookingID string) (*models.BookingDetailResp
 		&res.CompletionOTP, &res.EventAddress, &res.Latitude, &res.Longitude,
 		&res.ScheduledDate, &res.SlotTime,
 		&res.DevoteeGotram, &res.DevoteeNakshatram, &res.DevoteeRashi, &res.SankalpamPurpose,
-		&res.ChatRoomID, &res.CreatedAt,
+		&res.ChatRoomID, &res.CreatedAt, &res.CancellationReason,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get booking details: %w", err)
