@@ -95,6 +95,8 @@ fun DevoteeAppRoot() {
     var activeCancellationQuote by remember { mutableStateOf<CancellationQuote?>(null) }
     var isOffline by remember { mutableStateOf(false) }
     var restorationError by remember { mutableStateOf<String?>(null) }
+    // True while a saved session is being restored: show a spinner, not the login form.
+    var restoringSession by remember { mutableStateOf(PurohitApiClient.authToken.isNotBlank()) }
     val coroutineScope = rememberCoroutineScope()
     val eventConfig by EventConfigStore.config.collectAsState()
     val eventLive = eventConfig?.isLive == true
@@ -134,6 +136,7 @@ fun DevoteeAppRoot() {
                 kotlinx.coroutines.delay((2000L * attempt).coerceAtMost(30000L))
             }
         }
+        restoringSession = false
     }
 
     // Resume existing or ongoing booking from PostgreSQL upon authentication
@@ -234,7 +237,9 @@ fun DevoteeAppRoot() {
 
                     Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                         when (currentScreen) {
-                            DevoteeScreen.LOGIN -> DevoteeLoginScreen(
+                            DevoteeScreen.LOGIN -> if (restoringSession) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator()
+                            } else DevoteeLoginScreen(
                                 strings = strings,
                                 onLoginSuccess = {
                                     isAuthenticated = true

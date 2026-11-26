@@ -206,6 +206,7 @@ type BookingDetailResponse struct {
 	ChatRoomID         string     `json:"chat_room_id"`
 	CreatedAt          time.Time  `json:"created_at"`
 	RequestExpiresAt   *time.Time `json:"request_expires_at,omitempty"`
+	ScheduledAt        *time.Time `json:"scheduled_at,omitempty"`
 	CancellationReason string     `json:"cancellation_reason,omitempty"`
 }
 

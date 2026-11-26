@@ -552,11 +552,14 @@ func (s *Storage) CreateEventBooking(ctx context.Context, userID, eventID string
 		if !available {
 			return nil, ErrPriestUnavailable
 		}
-		// The priest app shows no new alerts while a ritual is accepted, so a "Now"
-		// request would just sit until expiry. Refuse it up front instead.
+		// The priest app shows no new alerts while a ritual is under way or due within
+		// the hour (see priest app dispatch poll), so a "Now" request would just sit
+		// until expiry. Refuse it up front. An accepted ritual scheduled later does not count.
 		var busy bool
 		if err = tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM bookings WHERE priest_id::text = $1
-			AND status IN ('ACCEPTED','IN_TRANSIT','ARRIVED','POOJA_STARTED'))`, req.PriestID).Scan(&busy); err != nil {
+			AND (status IN ('IN_TRANSIT','ARRIVED','POOJA_STARTED')
+				OR (status = 'ACCEPTED' AND (scheduled_at IS NULL OR scheduled_at < now() + make_interval(mins => $2 + 60)))))`,
+			req.PriestID, duration).Scan(&busy); err != nil {
 			return nil, err
 		}
 		if busy {

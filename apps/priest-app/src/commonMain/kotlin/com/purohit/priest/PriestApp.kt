@@ -1,5 +1,8 @@
 package com.purohit.priest
 
+import kotlinx.datetime.Clock
+import kotlinx.datetime.Instant
+import kotlin.time.Duration.Companion.minutes
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -207,8 +210,12 @@ fun PriestAppRoot() {
                     // 2. Check if an ongoing accepted/in-transit ritual is active to resume
                     val actRes = PurohitApiClient.fetchPriestBookings(priestId, "ACTIVE")
                     actRes.onSuccess { bookings ->
+                        // An accepted ritual scheduled more than an hour out is not active yet:
+                        // keep polling for new requests (matches the backend busy check).
+                        val soon = Clock.System.now() + 60.minutes
                         val ongoing = bookings.firstOrNull {
-                            it.status in listOf("ACCEPTED", "IN_TRANSIT", "ARRIVED", "POOJA_STARTED", "IN_PROGRESS")
+                            it.status in listOf("IN_TRANSIT", "ARRIVED", "POOJA_STARTED", "IN_PROGRESS") ||
+                                (it.status == "ACCEPTED" && (it.scheduled_at?.let { s -> runCatching { Instant.parse(s) < soon }.getOrDefault(true) } ?: true))
                         }
                         if (ongoing != null && !incomingBusy) {
                             hasSimulatedIncomingAlert = false

@@ -144,7 +144,8 @@ data class BookingDetailPayload(
     val sankalpam_purpose: String = "Family Prosperity & Health",
     val chat_room_id: String = "",
     val created_at: String = "",
-    val request_expires_at: String? = null
+    val request_expires_at: String? = null,
+    val scheduled_at: String? = null
 )
 
 @Serializable

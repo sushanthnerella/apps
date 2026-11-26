@@ -101,7 +101,7 @@ fun PushkaraluScreen(event: EventConfig?, language: AppLanguage, strings: EventS
         while (true) {
             com.purohit.devotee.network.PurohitApiClient.fetchGhatAvailability(event.id)
                 .onSuccess { list -> counts = list.associate { it.ghatId to it.availableCount } }
-            kotlinx.coroutines.delay(30_000)
+            kotlinx.coroutines.delay(10_000) // ponytail: poll; push update when ghat traffic justifies it
         }
     }
 
