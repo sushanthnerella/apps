@@ -68,7 +68,7 @@ fun PriestScheduleScreen(priestId: String = "", strings: StringContract) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(tr("Availability", "అందుబాటు", "उपलब्धता"), style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
         Text(tr("Publish the times when you're available so devotees can book you.", "భక్తులు మిమ్మల్ని బుక్ చేసుకునేలా మీరు అందుబాటులో ఉండే సమయాలను ప్రచురించండి.", "जिन समयों पर आप उपलब्ध हैं उन्हें प्रकाशित करें ताकि भक्त आपको बुक कर सकें।"), style = MaterialTheme.typography.bodyMedium)
-        Text(tr("Each time block you publish is one bookable slot, for example 9:00 AM – 10:00 AM. All times are IST.", "మీరు ప్రచురించే ప్రతి సమయ భాగం ఒక బుకింగ్ సమయం, ఉదా. 9:00 AM – 10:00 AM. అన్ని సమయాలు IST.", "आपका प्रकाशित हर समय-खंड एक बुक करने योग्य स्लॉट है, जैसे 9:00 AM – 10:00 AM। सभी समय IST में हैं।"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(tr("Each time block you publish is one bookable slot, for example 9:00 AM – 10:00 AM. All times are IST.", "మీరు ప్రచురించే ప్రతి సమయ భాగం ఒక బుకింగ్ సమయం, ఉదా. 9:00 AM – 10:00 AM. అన్ని సమయాలు IST.", "आपका प्रकाशित हर समय-खंड एक बुक करने योग्य स्लॉट है, जैसे सुबह 9:00 – 10:00। सभी समय भारतीय समय (IST) में हैं।"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
         IndiaDatePicker(value = date, language = language, enabled = !loading, onDateSelected = {
             date = it; slots = emptyList(); message = null; reload()

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"log"
 	"net/http"
 	"strings"
 
@@ -172,6 +173,9 @@ func registerRecoveryRoutes(router *mux.Router, storage *db.Storage, secret stri
 
 		_, err = storage.RequestEmailVerification(r.Context(), claims.Role, claims.UserID, payload.Email, secret)
 		if err != nil {
+			// The wrapped error names the SMTP stage (connect, STARTTLS, auth, MAIL FROM,
+			// RCPT TO, DATA) and the server reply; it never contains the SMTP password.
+			log.Printf("email verification send failed (user %s): %v", claims.UserID, err)
 			if errors.Is(err, auth.ErrEmailUnavailable) {
 				http.Error(w, `{"error":"email_service_unavailable","message":"Email service is currently unconfigured. Password recovery via email is unavailable."}`, http.StatusServiceUnavailable)
 				return

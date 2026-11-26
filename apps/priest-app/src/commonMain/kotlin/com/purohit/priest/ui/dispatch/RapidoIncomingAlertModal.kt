@@ -48,7 +48,7 @@ fun RapidoIncomingAlertModal(
     // Server deadline (ISO-8601) for event requests. When set, the countdown follows it and,
     // at zero, the alert just closes: the server expires the request, nothing is declined.
     expiresAt: String? = null,
-    onExpired: () -> Unit = onReject
+    onExpired: () -> Unit = {}
 ) {
     val deadline = remember(expiresAt) { expiresAt?.let { runCatching { kotlinx.datetime.Instant.parse(it) }.getOrNull() } }
     fun secondsToDeadline() = deadline?.let { (it - kotlinx.datetime.Clock.System.now()).inWholeSeconds.toInt().coerceAtLeast(0) }
@@ -70,7 +70,8 @@ fun RapidoIncomingAlertModal(
             delay(1000L)
             timeLeftSeconds = secondsToDeadline() ?: (timeLeftSeconds - 1)
         }
-        if (deadline != null) onExpired() else onReject()
+        // Never auto-decline: the server expires unanswered requests itself.
+        onExpired()
     }
 
     Box(
@@ -171,7 +172,7 @@ fun RapidoIncomingAlertModal(
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF701A75)
                         )
-                        Text(
+                        if (sankalpamPurpose.isNotBlank()) Text(
                             text = "${if (isTelugu) "సంకల్ప ఉద్దేశం" else if (isHindi) "संकल्प उद्देश्य" else "Sankalpam"}: $sankalpamPurpose",
                             style = MaterialTheme.typography.labelSmall,
                             color = Color(0xFF86198F)

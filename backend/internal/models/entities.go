@@ -193,19 +193,20 @@ type BookingDetailResponse struct {
 	IncludeSamagriKit bool    `json:"include_samagri_kit"`
 	// CompletionOTP is intentionally excluded from shared booking list and detail responses (Task 05).
 	// It is provided exclusively to the authenticated devotee booking owner via GET /api/v1/bookings/{id}/otp.
-	CompletionOTP     string     `json:"-"`
-	EventAddress      string     `json:"event_address"`
-	Latitude          float64    `json:"latitude"`
-	Longitude         float64    `json:"longitude"`
-	ScheduledDate     string     `json:"scheduled_date"`
-	SlotTime          string     `json:"slot_time"`
-	DevoteeGotram     string     `json:"devotee_gotram"`
-	DevoteeNakshatram string     `json:"devotee_nakshatram"`
-	DevoteeRashi      string     `json:"devotee_rashi"`
-	SankalpamPurpose  string     `json:"sankalpam_purpose"`
-	ChatRoomID        string     `json:"chat_room_id"`
-	CreatedAt         time.Time  `json:"created_at"`
-	RequestExpiresAt  *time.Time `json:"request_expires_at,omitempty"`
+	CompletionOTP      string     `json:"-"`
+	EventAddress       string     `json:"event_address"`
+	Latitude           float64    `json:"latitude"`
+	Longitude          float64    `json:"longitude"`
+	ScheduledDate      string     `json:"scheduled_date"`
+	SlotTime           string     `json:"slot_time"`
+	DevoteeGotram      string     `json:"devotee_gotram"`
+	DevoteeNakshatram  string     `json:"devotee_nakshatram"`
+	DevoteeRashi       string     `json:"devotee_rashi"`
+	SankalpamPurpose   string     `json:"sankalpam_purpose"`
+	ChatRoomID         string     `json:"chat_room_id"`
+	CreatedAt          time.Time  `json:"created_at"`
+	RequestExpiresAt   *time.Time `json:"request_expires_at,omitempty"`
+	CancellationReason string     `json:"cancellation_reason,omitempty"`
 }
 
 type BookingOTPResponse struct {

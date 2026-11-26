@@ -111,7 +111,8 @@ data class BookingDetailPayload(
     val slot_time: String = "",
     val latitude: Double = 17.3850,
     val longitude: Double = 78.4867,
-    val chat_room_id: String = ""
+    val chat_room_id: String = "",
+    val cancellation_reason: String = ""
 )
 
 @Serializable

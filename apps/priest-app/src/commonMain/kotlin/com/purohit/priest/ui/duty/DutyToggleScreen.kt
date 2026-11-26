@@ -33,6 +33,7 @@ fun DutyToggleScreen(
     devoteePhone: String = "",
     eventAddress: String = "",
     poojaTitle: String = "",
+    scheduledSlot: String = "",
     dakshinaAmount: Double = 0.0,
     priestId: String = "6e7d277c-4ee2-469f-96ac-331517389762",
     initialBookingStatus: String = "IN_TRANSIT",
@@ -238,6 +239,7 @@ fun DutyToggleScreen(
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.titleMedium
                     )
+                    if (scheduledSlot.isNotBlank()) Text("📅 $scheduledSlot", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
 
                     Spacer(modifier = Modifier.height(10.dp))
 

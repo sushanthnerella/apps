@@ -97,6 +97,9 @@ fun PriestAppRoot() {
     val strings = remember(currentLanguage) { LocalizationManager.getStrings(currentLanguage) }
 
     val coroutineScope = rememberCoroutineScope()
+    // Requests this priest declined or let lapse; the poll must not pop them up again
+    // while the server still lists them as REQUESTED (decline in flight, or expiry pending).
+    var dismissedRequestIds by remember { mutableStateOf(setOf<String>()) }
 
     var priestProfile by remember { mutableStateOf(PurohitApiClient.currentPriestProfile) }
     var showEmailDialog by remember { mutableStateOf(false) }
@@ -137,9 +140,12 @@ fun PriestAppRoot() {
     // Event config: on login and every 10 minutes (no config push on iOS yet) (the server enforces every flag regardless).
     LaunchedEffect(isRegistered) {
         if (!isRegistered) return@LaunchedEffect
+        var retryMs = 5_000L
         while (true) {
-            PurohitApiClient.fetchEventConfig().onSuccess { eventConfig = it }
-            kotlinx.coroutines.delay(10 * 60 * 1000L)
+            val ok = PurohitApiClient.fetchEventConfig().onSuccess { eventConfig = it }.isSuccess
+            // On failure retry with backoff (5s → 60s); keep the last good config meanwhile.
+            kotlinx.coroutines.delay(if (ok) 10 * 60 * 1000L else retryMs)
+            retryMs = if (ok) 5_000L else (retryMs * 2).coerceAtMost(60_000L)
         }
     }
 
@@ -154,7 +160,7 @@ fun PriestAppRoot() {
                     val reqRes = PurohitApiClient.fetchPriestBookings(priestId, "REQUESTED")
                     reqRes.onSuccess { bookings ->
                         isNetworkError = false
-                        val incoming = bookings.firstOrNull { it.status == "REQUESTED" }
+                        val incoming = bookings.firstOrNull { it.status == "REQUESTED" && it.id !in dismissedRequestIds }
                         // Only reconcile a server-backed alert after a successful poll. A
                         // failed poll must not dismiss a request, and accepting/declining
                         // it may be in flight while the poll response arrives.
@@ -308,6 +314,7 @@ fun PriestAppRoot() {
                                 devoteePhone = activeDevoteePhone,
                                 eventAddress = activeAddress,
                                 poojaTitle = activePoojaTitle,
+                                scheduledSlot = listOf(activeScheduledDate, activeSlotTime).filter { it.isNotBlank() && it != "Today" }.joinToString(" • "),
                                 dakshinaAmount = activeDakshina,
                                 priestId = priestId,
                                 initialBookingStatus = activeBookingStatus,
@@ -535,7 +542,7 @@ fun PriestAppRoot() {
                                         onClick = { showLanguageModal = true },
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
-                                        Text("🌐 Change Language (${currentLanguage.nativeName})")
+                                        Text("🌐 ${ptr("Change Language", "భాష మార్చండి", "भाषा बदलें")} (${currentLanguage.nativeName})")
                                     }
                                     Spacer(modifier = Modifier.height(10.dp))
                                     Spacer(modifier = Modifier.height(10.dp))
@@ -569,7 +576,11 @@ fun PriestAppRoot() {
                         devoteeRashi = activeDevoteeRashi,
                         sankalpamPurpose = activeSankalpamPurpose,
                         expiresAt = activeRequestExpiresAt,
-                        onExpired = { hasSimulatedIncomingAlert = false; activeBookingId = "" },
+                        onExpired = {
+                            dismissedRequestIds = dismissedRequestIds + activeBookingId
+                            hasSimulatedIncomingAlert = false
+                            activeBookingId = ""
+                        },
                         currentLanguage = currentLanguage,
                         strings = strings,
                         errorMessage = incomingError,
@@ -601,17 +612,37 @@ fun PriestAppRoot() {
                             }
                         },
                         onReject = {
-                            // Capture the ID first: activeBookingId is cleared below before the request runs.
+                            // Keep the alert open until the server confirms; a silent failure
+                            // used to leave the booking REQUESTED and the poll re-showed it.
                             val declinedId = activeBookingId
+                            incomingBusy = true
+                            incomingError = null
                             coroutineScope.launch {
                                 PurohitApiClient.updateBookingStatus(
                                     bookingId = declinedId,
                                     status = "CANCELLED",
                                     priestId = priestId
-                                )
+                                ).onSuccess {
+                                    dismissedRequestIds = dismissedRequestIds + declinedId
+                                    hasSimulatedIncomingAlert = false
+                                    activeBookingId = ""
+                                }.onFailure { err ->
+                                    // Already gone server-side (expired / devotee cancelled): just close.
+                                    val msg = err.message.orEmpty()
+                                    if (msg.contains("terminal") || msg.contains("request_expired") || msg.contains("HTTP 404")) {
+                                        dismissedRequestIds = dismissedRequestIds + declinedId
+                                        hasSimulatedIncomingAlert = false
+                                        activeBookingId = ""
+                                    } else {
+                                        incomingError = ptr(
+                                            "Could not decline this booking. Check your connection and try again.",
+                                            "బుకింగ్‌ను తిరస్కరించలేకపోయాము. కనెక్షన్ తనిఖీ చేసి మళ్లీ ప్రయత్నించండి.",
+                                            "बुकिंग अस्वीकार नहीं हुई। कनेक्शन जाँचकर फिर प्रयास करें।"
+                                        )
+                                    }
+                                }
+                                incomingBusy = false
                             }
-                            hasSimulatedIncomingAlert = false
-                            activeBookingId = ""
                         }
                     )
                 }
