@@ -99,6 +99,9 @@ func (s *Storage) GetPriestCustomServices(priestID string, lang string) ([]model
 		if len(checklistJSON) > 0 {
 			_ = json.Unmarshal(checklistJSON, &cs.SamagriChecklist)
 		}
+		if cs.SamagriChecklist == nil {
+			cs.SamagriChecklist = []string{}
+		}
 
 		displayTitle := rawTitle
 		displayDesc := rawDesc
@@ -135,6 +138,9 @@ func (s *Storage) GetPriestCustomServices(priestID string, lang string) ([]model
 
 // CreatePriestCustomService creates a new customized ritual offering with Dakshina pricing and 3-language prep
 func (s *Storage) CreatePriestCustomService(req models.CreateCustomServiceRequest) (string, error) {
+	if req.SamagriChecklist == nil {
+		req.SamagriChecklist = []string{}
+	}
 	checklistJSON, err := json.Marshal(req.SamagriChecklist)
 	if err != nil {
 		checklistJSON = []byte("[]")

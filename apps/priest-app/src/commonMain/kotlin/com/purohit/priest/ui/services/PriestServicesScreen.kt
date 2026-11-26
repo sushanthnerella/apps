@@ -185,7 +185,8 @@ fun PriestServicesScreen(
 
     if (showCreateModal) {
         AlertDialog(
-            onDismissRequest = { showCreateModal = false },
+            // Back / outside tap only closes an untouched form, so typed details are not lost.
+            onDismissRequest = { if (listOf(newTitle, newDakshina, newSamagriFee, newDuration, newDescription).all { it.isBlank() }) showCreateModal = false },
             title = {
                 Text(
                     if (isTelugu) "నూతన సేవను చేర్చండి" else if (isHindi) "नई पूजा सेवा जोड़ें" else "Create Custom Offering",
@@ -241,7 +242,7 @@ fun PriestServicesScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        if (newTitle.isNotBlank() && (newDakshina.toDoubleOrNull() ?: -1.0) >= 0 && (newSamagriFee.toDoubleOrNull() ?: -1.0) >= 0 && (newDuration.toIntOrNull() ?: 0) > 0) {
+                        if (newTitle.isNotBlank() && (newDakshina.toDoubleOrNull() ?: -1.0) >= 0 && (newSamagriFee.ifBlank { "0" }.toDoubleOrNull() ?: -1.0) >= 0 && (newDuration.toIntOrNull() ?: 0) > 0) {
                             createError = null
                             isSubmitting = true
                             coroutineScope.launch {
@@ -249,7 +250,7 @@ fun PriestServicesScreen(
                                     priest_id = priestId,
                                     title = newTitle,
                                     dakshina_fee = newDakshina.toDouble(),
-                                    samagri_kit_price = newSamagriFee.toDouble(),
+                                    samagri_kit_price = newSamagriFee.ifBlank { "0" }.toDouble(),
                                     duration_minutes = newDuration.toInt(),
                                     description = newDescription
                                 )

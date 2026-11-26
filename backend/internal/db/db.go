@@ -665,6 +665,9 @@ func (s *Storage) CreateBooking(req models.BookingCreateRequest) (string, string
 	if strings.TrimSpace(req.EventAddress) == "" {
 		return "", "", fmt.Errorf("event address is required")
 	}
+	if strings.TrimSpace(req.PoojaID) == "" {
+		return "", "", fmt.Errorf("pooja_id is required")
+	}
 	if req.BookingType == "" {
 		req.BookingType = "INSTANT_DISPATCH"
 	}
