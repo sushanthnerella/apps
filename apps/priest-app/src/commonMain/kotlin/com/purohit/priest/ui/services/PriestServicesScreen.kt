@@ -77,6 +77,7 @@ fun PriestServicesScreen(
     var newDuration by remember { mutableStateOf("") }
     var newDescription by remember { mutableStateOf("") }
     var isSubmitting by remember { mutableStateOf(false) }
+    var pendingRemove by remember { mutableStateOf<CustomServiceItem?>(null) }
 
     val isTelugu = currentLanguage == AppLanguage.TELUGU
     val isHindi = currentLanguage == AppLanguage.HINDI
@@ -174,13 +175,7 @@ fun PriestServicesScreen(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            TextButton(onClick = {
-                                coroutineScope.launch {
-                                    PurohitApiClient.deactivateCustomService(cs.id)
-                                        .onSuccess { customServices.remove(cs); loadError = null }
-                                        .onFailure { loadError = if (isTelugu) "తొలగించలేకపోయాము. మళ్లీ ప్రయత్నించండి." else if (isHindi) "हटा नहीं सके। फिर कोशिश करें।" else "Could not remove this offering. Try again." }
-                                }
-                            }) { Text(if (isTelugu) "తొలగించు" else if (isHindi) "हटाएँ" else "Remove", color = MaterialTheme.colorScheme.error) }
+                            TextButton(onClick = { pendingRemove = cs }) { Text(if (isTelugu) "తొలగించు" else if (isHindi) "हटाएँ" else "Remove", color = MaterialTheme.colorScheme.error) }
                         }
                     }
                 }
@@ -280,6 +275,22 @@ fun PriestServicesScreen(
                     Text(strings.common.cancelAction)
                 }
             }
+        )
+    }
+
+    pendingRemove?.let { item ->
+        AlertDialog(
+            onDismissRequest = { pendingRemove = null },
+            title = { Text(if (isTelugu) "ఈ సేవను తొలగించాలా?" else if (isHindi) "यह सेवा हटाएँ?" else "Remove this offering?") },
+            confirmButton = { TextButton(onClick = {
+                pendingRemove = null
+                                coroutineScope.launch {
+                                    PurohitApiClient.deactivateCustomService(item.id)
+                                        .onSuccess { customServices.remove(item); loadError = null }
+                                        .onFailure { loadError = if (isTelugu) "తొలగించలేకపోయాము. మళ్లీ ప్రయత్నించండి." else if (isHindi) "हटा नहीं सके। फिर कोशिश करें।" else "Could not remove this offering. Try again." }
+                                }
+            }) { Text(if (isTelugu) "తొలగించు" else if (isHindi) "हटाएँ" else "Remove", color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { pendingRemove = null }) { Text(if (isTelugu) "ఉంచు" else if (isHindi) "रखें" else "Keep") } }
         )
     }
 }

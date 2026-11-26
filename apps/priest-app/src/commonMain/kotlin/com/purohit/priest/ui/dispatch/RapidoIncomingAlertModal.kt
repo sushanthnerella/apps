@@ -57,7 +57,6 @@ fun RapidoIncomingAlertModal(
     val isHindi = currentLanguage == AppLanguage.HINDI
     // Decline needs a second tap so a slip next to Accept does not drop the request.
     var declineArmed by remember { mutableStateOf(false) }
-    LaunchedEffect(declineArmed) { if (declineArmed) { kotlinx.coroutines.delay(4_000); declineArmed = false } }
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
 

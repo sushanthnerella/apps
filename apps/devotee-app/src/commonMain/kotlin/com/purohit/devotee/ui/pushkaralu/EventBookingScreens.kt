@@ -308,7 +308,8 @@ fun EventBookingScreen(
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         val headline = when (phase) {
             EventBookingPhase.WAITING -> strings.waitingForPriest
-            EventBookingPhase.CONFIRMED, EventBookingPhase.STARTED -> strings.bookingConfirmed
+            EventBookingPhase.CONFIRMED -> strings.bookingConfirmed
+            EventBookingPhase.STARTED -> com.purohit.devotee.LocalAppStrings.current.common.bookingInProgress
             EventBookingPhase.COMPLETED -> strings.ritualCompleted
             EventBookingPhase.EXPIRED -> strings.requestExpired
             EventBookingPhase.CANCELLED -> strings.priestDeclined
