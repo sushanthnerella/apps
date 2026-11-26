@@ -22,6 +22,8 @@ internal fun appearanceFromStoredValue(value: String?): Appearance = Appearance.
 internal expect fun motionAllowed(): Boolean
 internal expect fun readAppearance(): String?
 internal expect fun writeAppearance(value: String)
+internal expect fun readPref(key: String): String?
+internal expect fun writePref(key: String, value: String)
 
 internal fun appearanceScheme(value: Appearance): ColorScheme = when (value) {
     Appearance.ROYAL -> lightColorScheme(primary = Color(0xFF74162C), onPrimary = Color.White, primaryContainer = Color(0xFFF6DCE0), onPrimaryContainer = Color(0xFF4B081A), secondary = Color(0xFF805500), secondaryContainer = Color(0xFFFFE4A3), onSecondaryContainer = Color(0xFF3D2800), background = Color(0xFFFFF8EF), surface = Color(0xFFFFF8EF), surfaceVariant = Color(0xFFF3E5D2), onSurfaceVariant = Color(0xFF50443B))

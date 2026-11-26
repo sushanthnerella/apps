@@ -120,19 +120,18 @@ fun DevoteeAppRoot() {
         while (PurohitApiClient.authToken.isNotBlank() && !isAuthenticated) {
             val result = PurohitApiClient.fetchProfile()
             if (result.isSuccess) {
+                restorationError = null
                 isAuthenticated = true
                 currentScreen = DevoteeScreen.SERVICES
-            } else if (PurohitApiClient.authToken.isNotBlank() && ++attempt < 4) {
-                kotlinx.coroutines.delay(2000L * attempt)
-            } else {
-                // Token cleared means the session really ended: just show login, no error popup.
-                // Token kept means the server could not be reached.
-                if (PurohitApiClient.authToken.isNotBlank()) restorationError = when (currentLanguage) {
-                    AppLanguage.TELUGU -> "Puja Vaahini సర్వర్‌ను చేరలేకపోయాము. ఇంటర్నెట్ తనిఖీ చేసి యాప్‌ను మళ్లీ తెరవండి."
-                    AppLanguage.HINDI -> "Puja Vaahini सर्वर तक नहीं पहुँच सके। इंटरनेट जाँचकर ऐप फिर खोलें।"
-                    else -> "Could not reach Puja Vaahini. Check your internet and reopen the app."
+            } else if (PurohitApiClient.authToken.isNotBlank()) {
+                // Token kept means the server could not be reached: keep the session and keep
+                // retrying until the network is back (token cleared = real 401, loop exits).
+                if (++attempt >= 3) restorationError = when (currentLanguage) {
+                    AppLanguage.TELUGU -> "Puja Vaahini సర్వర్‌ను చేరలేకపోయాము. కనెక్షన్ వచ్చాక మళ్లీ ప్రయత్నిస్తాము…"
+                    AppLanguage.HINDI -> "Puja Vaahini सर्वर तक नहीं पहुँच सके। कनेक्शन आते ही फिर कोशिश करेंगे…"
+                    else -> "Could not reach Puja Vaahini. Retrying when you are back online…"
                 }
-                break
+                kotlinx.coroutines.delay((2000L * attempt).coerceAtMost(30000L))
             }
         }
     }
@@ -329,7 +328,12 @@ fun DevoteeAppRoot() {
                                         rating_avg = 0.0, total_completed_poojas = 0, repeat_booking_count = 0,
                                         distance_meters = 0.0, distance_km = 0.0, eta_minutes = 0, vehicle_type = ""
                                     )
-                                    currentScreen = DevoteeScreen.LIVE_TRACKING
+                                    if (booking.booking_type.startsWith("EVENT_")) {
+                                        // Ghat bookings resume on their own step view; the booking code is the completion OTP.
+                                        eventBooking = EventBookingResponse(bookingId = booking.id, status = booking.status, bookingCode = booking.completion_otp,
+                                            totalAmountMinor = (booking.total_amount * 100).toLong(), requestExpiresAt = "", chatRoomId = booking.chat_room_id)
+                                        currentScreen = DevoteeScreen.PUSHKARALU_BOOKING
+                                    } else currentScreen = DevoteeScreen.LIVE_TRACKING
                                 }
                             )
                             DevoteeScreen.BOOKINGS_RADAR -> if (activePoojaId.isBlank()) {

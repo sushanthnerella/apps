@@ -198,8 +198,8 @@ data class PriestCustomServicePayload(
     val title_te: String = "",
     val title_hi: String = "",
     val category: String = "Special Ritual",
-    val dakshina_fee: Double = 5116.0,
-    val samagri_kit_price: Double = 1500.0,
+    val dakshina_fee: Double = 0.0,
+    val samagri_kit_price: Double = 0.0, // server omits 0 (omitempty); never invent a price
     val duration_minutes: Int = 90,
     val is_online_eligible: Boolean = true,
     val samagri_checklist: List<String> = emptyList(),
@@ -772,6 +772,22 @@ object PurohitApiClient {
                 header("Authorization", "Bearer $authToken")
             }
             Result.success(response.body<List<PriestCustomServicePayload>>())
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun deactivateCustomService(serviceId: String): Result<Unit> {
+        val client = httpClient ?: return Result.failure(Exception("HTTP client engine unavailable"))
+        return try {
+            val response = client.delete("$baseUrl/api/v1/priests/custom-services/$serviceId") {
+                header("Authorization", "Bearer $authToken")
+            }
+            if (response.status.value in 200..299) Result.success(Unit)
+            else {
+                if (response.status.value == 401) authToken = ""
+                Result.failure(Exception("Server returned ${response.status.value}: ${response.bodyAsText()}"))
+            }
         } catch (e: Exception) {
             Result.failure(e)
         }

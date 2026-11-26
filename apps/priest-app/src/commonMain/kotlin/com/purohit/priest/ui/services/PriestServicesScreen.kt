@@ -35,10 +35,13 @@ fun PriestServicesScreen(
     var createError by remember { mutableStateOf<String?>(null) }
 
     fun loadServices() {
+        // Always scope to this priest: an empty priest_id lists every priest's offerings.
+        val ownerId = priestId.ifBlank { PurohitApiClient.currentPriestProfile?.id.orEmpty() }
+        if (ownerId.isBlank()) { isLoading = false; return }
         isLoading = true
         loadError = null
         coroutineScope.launch {
-            val res = PurohitApiClient.fetchCustomServices(lang = currentLanguage.isoCode)
+            val res = PurohitApiClient.fetchCustomServices(priestId = ownerId, lang = currentLanguage.isoCode)
             res.onSuccess { remoteList ->
                 customServices.clear()
                 run {
@@ -171,7 +174,13 @@ fun PriestServicesScreen(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-
+                            TextButton(onClick = {
+                                coroutineScope.launch {
+                                    PurohitApiClient.deactivateCustomService(cs.id)
+                                        .onSuccess { customServices.remove(cs); loadError = null }
+                                        .onFailure { loadError = if (isTelugu) "తొలగించలేకపోయాము. మళ్లీ ప్రయత్నించండి." else if (isHindi) "हटा नहीं सके। फिर कोशिश करें।" else "Could not remove this offering. Try again." }
+                                }
+                            }) { Text(if (isTelugu) "తొలగించు" else if (isHindi) "हटाएँ" else "Remove", color = MaterialTheme.colorScheme.error) }
                         }
                     }
                 }

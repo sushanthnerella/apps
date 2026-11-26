@@ -7,3 +7,5 @@ internal object AppearanceStorage {
 }
 internal actual fun readAppearance(): String? = AppearanceStorage.context.getSharedPreferences("appearance", Context.MODE_PRIVATE).getString("theme", null)
 internal actual fun writeAppearance(value: String) { AppearanceStorage.context.getSharedPreferences("appearance", Context.MODE_PRIVATE).edit().putString("theme", value).apply() }
+internal actual fun readPref(key: String): String? = AppearanceStorage.context.getSharedPreferences("appearance", Context.MODE_PRIVATE).getString(key, null)
+internal actual fun writePref(key: String, value: String) { AppearanceStorage.context.getSharedPreferences("appearance", Context.MODE_PRIVATE).edit().putString(key, value).apply() }
