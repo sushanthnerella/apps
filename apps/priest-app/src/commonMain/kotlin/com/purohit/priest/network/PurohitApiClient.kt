@@ -771,7 +771,7 @@ object PurohitApiClient {
                 }
                 header("Authorization", "Bearer $authToken")
             }
-            Result.success(response.body<List<PriestCustomServicePayload>>())
+            Result.success(response.body<List<PriestCustomServicePayload>?>() ?: emptyList())
         } catch (e: Exception) {
             Result.failure(e)
         }

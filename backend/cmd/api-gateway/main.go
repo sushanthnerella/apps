@@ -637,6 +637,9 @@ func buildGatewayRouter(storage *db.Storage, pushNotifier notify.PushNotifier) *
 			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
 			return
 		}
+		if services == nil {
+			services = []models.PriestCustomService{}
+		}
 		json.NewEncoder(w).Encode(services)
 	}).Methods("GET", "OPTIONS")
 
