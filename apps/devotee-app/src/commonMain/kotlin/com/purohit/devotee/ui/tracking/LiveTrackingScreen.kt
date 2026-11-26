@@ -45,10 +45,11 @@ fun LiveTrackingScreen(
         while (true) {
             PurohitApiClient.fetchBookingDetails(bookingId).onSuccess { status = it.status; error = null; failures = 0; refreshDelay = 5000L }
                 .onFailure {
-                    // ponytail: one blip (e.g. network waking after background) is not worth an error; retry fast.
+                    // ponytail: the network takes a few seconds to wake after background; only
+                    // report after ~10 s of consecutive failures (2 s, 3 s, then backoff).
                     failures++
-                    if (failures >= 2) error = strings.common.bookingRefreshError
-                    refreshDelay = if (failures == 1) 2000L else (refreshDelay * 2).coerceAtMost(15000L)
+                    if (failures >= 3) error = strings.common.bookingRefreshError
+                    refreshDelay = when (failures) { 1 -> 2000L; 2 -> 3000L; else -> (refreshDelay * 2).coerceAtMost(15000L) }
                 }
             if (otp.isBlank()) PurohitApiClient.fetchBookingOtp(bookingId).onSuccess { otp = it.completion_otp; otpError = null }
                 .onFailure { otpError = tr("Could not load the completion code. Check your connection.", "పూర్తి కోడ్ పొందలేకపోయాము. కనెక్షన్ తనిఖీ చేయండి.", "समापन कोड नहीं मिला। कनेक्शन जाँचें।") }
