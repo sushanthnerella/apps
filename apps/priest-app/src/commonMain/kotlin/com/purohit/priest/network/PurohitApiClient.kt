@@ -303,6 +303,7 @@ object PurohitApiClient {
                     json(Json {
                         ignoreUnknownKeys = true
                         isLenient = true
+                        coerceInputValues = true // null for a non-null field uses its default
                         prettyPrint = true
                         encodeDefaults = true
                     })
