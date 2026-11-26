@@ -359,3 +359,17 @@ func (s *Storage) AutoTranslateAllServices() (int, error) {
 
 	return count, nil
 }
+
+// DeactivatePriestCustomService hides an offering; only its owner can do it.
+// Returns sql.ErrNoRows when the offering does not exist or belongs to another priest.
+func (s *Storage) DeactivatePriestCustomService(serviceID, priestID string) error {
+	res, err := s.DB.Exec(`UPDATE priest_custom_services SET is_active = FALSE
+		WHERE id::text = $1 AND priest_id::text = $2`, serviceID, priestID)
+	if err != nil {
+		return fmt.Errorf("failed to deactivate custom service: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}

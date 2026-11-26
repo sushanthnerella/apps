@@ -55,7 +55,13 @@ fun DutyToggleScreen(
     var enteredOtp by remember { mutableStateOf("") }
     // Ghat (event) bookings check the devotee's booking code before the ritual starts; it is reused at completion.
     var codeForStart by remember { mutableStateOf(false) }
-    var verifiedStartCode by remember(activeBookingId) { mutableStateOf("") }
+    // Persisted as "bookingId:code" so Complete still works after the app is restarted mid-pooja.
+    var verifiedStartCode by remember(activeBookingId) {
+        mutableStateOf(com.purohit.priest.readPref("ghat_start_code").orEmpty().let { if (activeBookingId.isNotBlank() && it.startsWith("$activeBookingId:")) it.substringAfter(':') else "" })
+    }
+    LaunchedEffect(activeBookingId, verifiedStartCode) {
+        if (activeBookingId.isNotBlank()) com.purohit.priest.writePref("ghat_start_code", if (verifiedStartCode.isBlank()) "" else "$activeBookingId:$verifiedStartCode")
+    }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var statusIsError by remember { mutableStateOf(false) }
     var isUpdatingStatus by remember { mutableStateOf(false) }

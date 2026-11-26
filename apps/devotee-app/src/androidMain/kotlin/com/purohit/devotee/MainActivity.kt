@@ -31,9 +31,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        AppForeground.resumed.value = true
         com.purohit.devotee.event.EventConfigStore.refreshIfStale()
         // Ask for notifications only once the devotee is signed in, not on first launch.
         if (com.purohit.devotee.network.PurohitApiClient.authToken.isNotBlank()) requestNotificationPermission()
+    }
+
+    override fun onPause() {
+        AppForeground.resumed.value = false
+        super.onPause()
     }
 
     private fun subscribeToEventConfigTopic() {

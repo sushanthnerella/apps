@@ -90,6 +90,7 @@ fun PriestAppRoot() {
     var showLogoutModal by remember { mutableStateOf(false) }
     var isNetworkError by remember { mutableStateOf(false) }
     var networkErrorMessage by remember { mutableStateOf("") }
+    var sessionRetryTick by remember { mutableStateOf(0) }
 
     // Follow the phone language when the app supports it; Telugu stays the default for other languages.
     var currentLanguage by rememberSaveable { mutableStateOf(when (androidx.compose.ui.text.intl.Locale.current.language) { "en" -> AppLanguage.ENGLISH; "hi" -> AppLanguage.HINDI; else -> AppLanguage.TELUGU }) }
@@ -125,27 +126,38 @@ fun PriestAppRoot() {
         }
     }
 
-    LaunchedEffect(Unit) {
-        if (PurohitApiClient.authToken.isNotBlank()) {
+    // Session restore. A network failure keeps the token and retries until the server answers
+    // (offline start, or a blip after the OS restarted the app mid-booking); only a 401, which
+    // clears the token in the API client, ends the session and shows login.
+    LaunchedEffect(sessionRetryTick) {
+        var waitMs = 2_000L
+        while (PurohitApiClient.authToken.isNotBlank() && !isRegistered) {
             PurohitApiClient.fetchPriestProfile().onSuccess {
                 priestProfile = it
                 priestId = it.id
                 priestName = it.full_name
                 isRegistered = true
+                isNetworkError = false
                 currentScreen = PriestScreen.DUTY_RADAR
-            }.onFailure { networkErrorMessage = it.message.orEmpty(); isNetworkError = true }
+            }.onFailure {
+                if (PurohitApiClient.authToken.isNotBlank()) { networkErrorMessage = it.message.orEmpty(); isNetworkError = true }
+                else isNetworkError = false
+            }
+            if (isRegistered || PurohitApiClient.authToken.isBlank()) break
+            kotlinx.coroutines.delay(waitMs)
+            waitMs = (waitMs * 2).coerceAtMost(30_000L)
         }
     }
 
     // Event config: on login and every 10 minutes (no config push on iOS yet) (the server enforces every flag regardless).
     LaunchedEffect(isRegistered) {
         if (!isRegistered) return@LaunchedEffect
-        var retryMs = 5_000L
+        var retryMs = 2_000L
         while (true) {
             val ok = PurohitApiClient.fetchEventConfig().onSuccess { eventConfig = it }.isSuccess
-            // On failure retry with backoff (5s → 60s); keep the last good config meanwhile.
+            // On failure retry with backoff (2s → 30s) so the tab appears soon after login or a network blip; keep the last good config meanwhile.
             kotlinx.coroutines.delay(if (ok) 10 * 60 * 1000L else retryMs)
-            retryMs = if (ok) 5_000L else (retryMs * 2).coerceAtMost(60_000L)
+            retryMs = if (ok) 2_000L else (retryMs * 2).coerceAtMost(30_000L)
         }
     }
 
@@ -292,7 +304,8 @@ fun PriestAppRoot() {
                         if (isNetworkError) {
                             PriestNoInternetScreen(
                                 strings = strings,
-                                onRetry = { isNetworkError = false },
+                                // Retry restores the session; it must not drop to the login screen.
+                                onRetry = { if (PurohitApiClient.authToken.isNotBlank() && !isRegistered) sessionRetryTick++ else isNetworkError = false },
                                 serverUrl = PurohitApiClient.baseUrl
                             )
                         } else {

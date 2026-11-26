@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -665,6 +666,26 @@ func buildGatewayRouter(storage *db.Storage, pushNotifier notify.PushNotifier) *
 			"message":    "Custom ritual service created with personalized Dakshina",
 		})
 	}))).Methods("POST")
+
+	// Priest turns off one of their own offerings (it stops matching and disappears from lists).
+	router.HandleFunc("/api/v1/priests/custom-services/{id}", requireRole(storage, "priest")(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		claims := getCallerClaims(r)
+		if claims == nil {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		err := storage.DeactivatePriestCustomService(mux.Vars(r)["id"], claims.UserID)
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, `{"error":"not_found"}`, http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			http.Error(w, `{"error":"could not remove offering"}`, http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{"status": "SUCCESS"})
+	})).Methods("DELETE")
 
 	// 13b. CMS 3-Language Service Translation & Converter
 	router.HandleFunc("/api/v1/services/translations", func(w http.ResponseWriter, r *http.Request) {

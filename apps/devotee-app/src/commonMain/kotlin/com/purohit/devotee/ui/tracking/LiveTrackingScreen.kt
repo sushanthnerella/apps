@@ -21,6 +21,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.purohit.devotee.network.PurohitApiClient
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 
 @Composable
 fun LiveTrackingScreen(
@@ -43,6 +44,12 @@ fun LiveTrackingScreen(
         var refreshDelay = 5000L
         var failures = 0
         while (true) {
+            if (!com.purohit.devotee.AppForeground.resumed.value) {
+                // Paused in background; on return start counting failures afresh.
+                com.purohit.devotee.AppForeground.resumed.first { it }
+                failures = 0
+                error = null
+            }
             PurohitApiClient.fetchBookingDetails(bookingId).onSuccess { status = it.status; error = null; failures = 0; refreshDelay = 5000L }
                 .onFailure {
                     // ponytail: the network takes a few seconds to wake after background; only
