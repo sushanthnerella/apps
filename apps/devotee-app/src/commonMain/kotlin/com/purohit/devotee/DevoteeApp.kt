@@ -204,7 +204,8 @@ fun DevoteeAppRoot() {
                             if (eventLive || inEventFlow) NavigationBarItem(
                                 selected = inEventFlow,
                                 onClick = { currentScreen = DevoteeScreen.PUSHKARALU },
-                                label = { Text(strings.event.tabEvent, style = MaterialTheme.typography.labelSmall, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center) },
+                                // ponytail: one long word ("Pushkaralu") breaks mid-word at large font scales; keep it at 1.0x on one line.
+                                label = { val fs = androidx.compose.ui.platform.LocalDensity.current.fontScale; Text(strings.event.tabEvent, style = MaterialTheme.typography.labelSmall.let { it.copy(fontSize = it.fontSize * (minOf(fs, 1f) / fs)) }, maxLines = 1, softWrap = false, textAlign = androidx.compose.ui.text.style.TextAlign.Center) },
                                 icon = { Text("🌊") }
                             ) else NavigationBarItem(
                                 selected = currentScreen == DevoteeScreen.PUJA_STORE,

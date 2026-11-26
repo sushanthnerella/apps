@@ -103,13 +103,20 @@ fun DutyToggleScreen(
 
     LaunchedEffect(priestId) {
         dutyBusy = true
-        PurohitApiClient.getDutyStatus().onSuccess {
-            isOnline = it.is_online
-            locationConfirmed = it.location_confirmed
-            dutyLoaded = true
-            dutyError = null
-        }.onFailure {
-            dutyError = tr("Could not load availability. Reopen to retry.", "అందుబాటు పొందలేకపోయాము. మళ్లీ తెరవండి.", "उपलब्धता नहीं मिली। फिर से खोलें।")
+        // Retry with backoff (2s → 30s) until the status loads; a cold start often races the network.
+        var retryMs = 2_000L
+        while (!dutyLoaded) {
+            PurohitApiClient.getDutyStatus().onSuccess {
+                isOnline = it.is_online
+                locationConfirmed = it.location_confirmed
+                dutyLoaded = true
+                dutyError = null
+            }.onFailure {
+                dutyError = tr("Could not load availability. Retrying…", "అందుబాటు పొందలేకపోయాము. మళ్లీ ప్రయత్నిస్తున్నాము…", "उपलब्धता नहीं मिली। फिर प्रयास हो रहा है…")
+                dutyBusy = false
+                kotlinx.coroutines.delay(retryMs)
+                retryMs = (retryMs * 2).coerceAtMost(30_000L)
+            }
         }
         dutyBusy = false
         // An online session may outlive the Android service. Refresh its fix and restart sharing.

@@ -27,7 +27,12 @@ func (s *Storage) GetNearbyPriests(devLat, devLon, radiusMeters float64, service
 
 	query := `
 		SELECT id, full_name, phone, sampradaya, veda_shakha, rating_avg, total_completed_poojas, repeat_booking_count,
-		       latitude, longitude, eta_minutes, vehicle_type, services_offered, COALESCE(acceptance_rate, 0.5)
+		       latitude, longitude, eta_minutes, vehicle_type,
+		       -- custom offerings ("My Offerings") count as services for matching
+		       ARRAY(SELECT DISTINCT s FROM unnest(COALESCE(services_offered::text[], '{}') ||
+		           ARRAY(SELECT cs.title::text FROM priest_custom_services cs
+		                 WHERE cs.priest_id = priests.id AND COALESCE(cs.is_active, true))) AS s),
+		       COALESCE(acceptance_rate, 0.5)
 		FROM priests
 		WHERE is_online = true AND location_confirmed = true
         AND ST_DWithin(ST_SetSRID(ST_MakePoint(longitude, latitude),4326)::geography,
