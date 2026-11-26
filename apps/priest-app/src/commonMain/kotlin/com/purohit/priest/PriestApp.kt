@@ -79,6 +79,7 @@ fun PriestAppRoot() {
     var activeBookingStatus by remember { mutableStateOf("IN_TRANSIT") }
     var activeBookingType by remember { mutableStateOf("") }
     var activeRequestExpiresAt by remember { mutableStateOf<String?>(null) }
+    var activeScheduledAt by remember { mutableStateOf<String?>(null) }
     var eventConfig by remember { mutableStateOf<com.purohit.contracts.event.EventConfig?>(null) }
 
     var hasSimulatedIncomingAlert by remember { mutableStateOf(false) }
@@ -203,6 +204,7 @@ fun PriestAppRoot() {
                             activeChatRoomId = incoming.chat_room_id
                             activeBookingType = incoming.booking_type
                             activeRequestExpiresAt = incoming.request_expires_at
+                            activeScheduledAt = incoming.scheduled_at
                             hasSimulatedIncomingAlert = true
                         }
                     }
@@ -212,10 +214,9 @@ fun PriestAppRoot() {
                     actRes.onSuccess { bookings ->
                         // An accepted ritual scheduled more than an hour out is not active yet:
                         // keep polling for new requests (matches the backend busy check).
-                        val soon = Clock.System.now() + 60.minutes
                         val ongoing = bookings.firstOrNull {
                             it.status in listOf("IN_TRANSIT", "ARRIVED", "POOJA_STARTED", "IN_PROGRESS") ||
-                                (it.status == "ACCEPTED" && (it.scheduled_at?.let { s -> runCatching { Instant.parse(s) < soon }.getOrDefault(true) } ?: true))
+                                (it.status == "ACCEPTED" && isDueSoon(it.scheduled_at))
                         }
                         if (ongoing != null && !incomingBusy) {
                             hasSimulatedIncomingAlert = false
@@ -616,7 +617,8 @@ fun PriestAppRoot() {
                                     priestId = priestId
                                 ).onSuccess {
                                     hasSimulatedIncomingAlert = false
-                                    hasActiveBooking = true
+                                    // A ritual for later is not active yet: keep listening for new requests.
+                                    if (isDueSoon(activeScheduledAt)) hasActiveBooking = true else activeBookingId = ""
                                     activeBookingStatus = "ACCEPTED"
                                     // The active booking card lives on Duty Radar; take the priest there.
                                     currentScreen = PriestScreen.DUTY_RADAR
@@ -776,3 +778,7 @@ fun PriestAppRoot() {
         }
     }
 }
+
+/** True when an accepted ritual starts within the hour, or has no time (home visit / Now). Matches the backend busy check. */
+internal fun isDueSoon(scheduledAt: String?): Boolean =
+    scheduledAt?.let { runCatching { Instant.parse(it) < Clock.System.now() + 60.minutes }.getOrDefault(true) } ?: true
